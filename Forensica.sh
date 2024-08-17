@@ -2,8 +2,13 @@
 
   # Memory Forensics Function
 memory_forensics() {
+
+    sleep 1
+
     echo "Running Memory Forensics..."
     
+    sleep 2
+
     # Set memory threshold in MB
     
     total_mem=$(grep MemTotal /proc/meminfo | awk '{print $2}')
@@ -32,9 +37,18 @@ memory_forensics() {
 
   # Log Analysis Function
 log_analysis() {
-    echo "Running Advanced Log File Analysis..."
-
     
+    sleep 1
+
+    echo "Running Advanced Log File Analysis..."
+     
+    sleep 1
+
+    echo "what is your Email?"
+    read $EMAIL_ALERT
+    
+    sleep 2
+
     LOG_FILES=("/var/log/auth.log" "/var/log/syslog" "/var/log/dmesg")  
     ANALYSIS_FILE="advanced_log_analysis.txt"
     PATTERNS=("Failed password" "error" "segfault" "unauthorized access")  
@@ -83,3 +97,51 @@ log_analysis() {
 
     echo "Advanced log file analysis completed. Analysis saved to $ANALYSIS_FILE."
 }
+
+# Main Menu Integration
+
+show_help() {
+
+    echo " Usage: $0 [OPTION]"
+    
+    echo "Options: "
+    
+    echo "  --mem-forensics          Run memory forensics"
+    
+    echo "  --log-analysis           Run log file analysis"
+    
+    echo "  --help                   Display the help message"
+}
+
+
+if [ $# -eq 0 ]; then
+   echo "No option provided. Use --help for usage information."
+   exit 1
+fi
+
+for arg in "$@"; do
+    
+
+case $arg in
+   --mem-forensics)
+       memory_forensics
+       shift
+       ;;
+   --log-analysis)
+       log_analysis
+       shift
+       ;;
+   --help)
+       show_help
+       exit 0
+       ;;
+   *)
+
+       echo "Unknown option: $arg"
+       sleep 1
+       show_help
+       exit 1
+       ;;
+esac
+
+done
