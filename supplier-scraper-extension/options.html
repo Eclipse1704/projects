@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>הגדרות - סורק מוצרים</title>
+<link rel="stylesheet" href="ui.css">
+<style>body{max-width:720px;margin:0 auto;padding:16px}</style>
+</head>
+<body>
+<h1>הגדרות</h1>
+
+<label>מפתח API של Claude <span class="hint">(מ-console.anthropic.com. נשמר רק בדפדפן הזה)</span></label>
+<input id="apiKey" type="password" class="ltr" placeholder="sk-ant-...">
+
+<label>מודל</label>
+<input id="model" class="ltr">
+
+<label>שם התיקייה בהורדות</label>
+<input id="outputFolder" class="ltr">
+
+<label>סטטוס המוצרים בייבוא</label>
+<select id="publishStatus">
+  <option value="0">טיוטה (מומלץ: בודקים ומפרסמים ידנית)</option>
+  <option value="1">מפורסם</option>
+</select>
+
+<label>כתובת תיקיית הקבצים באתר <span class="hint">(לא חובה. אם מעלים את התמונות וקובצי ה-PDF לתיקייה באתר, למשל https://www.ndt24.co.il/wp-content/uploads/import/ , קובץ הייבוא ישתמש בהם עם השמות החדשים. אם ריק, ווקומרס ימשוך את התמונות ישירות מאתר היצרן.)</span></label>
+<input id="imagesBaseUrl" class="ltr">
+
+<label>דפי מוצר לדוגמה מהאתר שלך <span class="hint">(כתובת בכל שורה. Claude לומד מהם את הסגנון והמונחים)</span></label>
+<textarea id="styleExampleUrls" class="ltr" rows="4"></textarea>
+
+<label>מילון מונחים <span class="hint">(שורה לכל מונח: אנגלית = איך אומרים אצלנו)</span></label>
+<textarea id="glossary" rows="14"></textarea>
+
+<div class="row"><button id="save">שמירה</button></div>
+<p id="status" class="ok"></p>
+<script type="module" src="options.js"></script>
+</body>
+</html>
