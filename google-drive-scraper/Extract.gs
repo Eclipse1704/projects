@@ -128,10 +128,56 @@ function pageText(html, maxChars) {
   return out.join('\n').slice(0, maxChars || 15000);
 }
 
+// Turn a thumbnail / resized URL into the original, full-size image URL.
 function canonicalImage(url) {
   return url
-    .replace(/-\d{2,4}x\d{2,4}(?=\.(jpe?g|png|webp)(\?|$))/i, '')
-    .replace(/_(\d{2,4}x\d{0,4}|\d{0,4}x\d{2,4}|small|medium|large|grande|compact)(?=\.(jpe?g|png|webp))/i, '');
+    .replace(/-\d{2,4}x\d{2,4}(?=\.(jpe?g|png|webp)(\?|$))/i, '')                                  // WordPress thumbnails
+    .replace(/_(\d{2,4}x\d{0,4}|\d{0,4}x\d{2,4}|pico|icon|thumb|small|compact|medium|large|grande)(?=\.(jpe?g|png|webp))/i, '') // Shopify
+    .replace(/(\/media\/[^\/?#]+\.(jpe?g|png|webp))\/v1\/.*$/i, '$1')                                // Wix
+    .replace(/([?&])format=\d+w/i, '$1format=2500w')                                                 // Squarespace
+    .replace(/([?&])(width|height|w|h|resize|fit|crop|quality|q)=[^&#]*/gi, '$1')                    // resize parameters
+    .replace(/[?&]+(#|$)/, '$1').replace(/\?&+/, '?').replace(/&&+/g, '&');
+}
+
+// Same photo in different sizes -> same key.
+function imageKey(url) {
+  var name = canonicalImage(url).split(/[?#]/)[0].split('/').pop().toLowerCase();
+  return name.replace(/\.(jpe?g|png|webp)$/, '').replace(/(-scaled|@\dx|-e\d{10,})$/, '');
+}
+
+// Largest candidate in a srcset ("a.jpg 300w, b.jpg 1200w").
+function largestFromSrcset(srcset) {
+  var best = null;
+  var bestW = -1;
+  String(srcset || '').split(/,\s+(?=\S)/).forEach(function (part) {
+    var bits = part.trim().split(/\s+/);
+    var w = parseFloat((bits[1] || '1').replace(/[wx]$/i, '')) * (/x$/i.test(bits[1] || '') ? 1000 : 1);
+    if (bits[0] && w > bestW) { best = bits[0]; bestW = w; }
+  });
+  return best;
+}
+
+// Pixel size from the file header (JPEG / PNG / WebP), without decoding the image.
+function imageSize(bytes) {
+  var b = function (i) { return bytes[i] & 255; };
+  if (b(0) === 0x89 && b(1) === 0x50) return { w: (b(16) << 24 | b(17) << 16 | b(18) << 8 | b(19)) >>> 0, h: (b(20) << 24 | b(21) << 16 | b(22) << 8 | b(23)) >>> 0 };
+  if (b(0) === 0x52 && b(8) === 0x57) { // RIFF....WEBP
+    var chunk = String.fromCharCode(b(12), b(13), b(14), b(15));
+    if (chunk === 'VP8X') return { w: 1 + (b(24) | b(25) << 8 | b(26) << 16), h: 1 + (b(27) | b(28) << 8 | b(29) << 16) };
+    if (chunk === 'VP8 ') return { w: (b(26) | b(27) << 8) & 0x3fff, h: (b(28) | b(29) << 8) & 0x3fff };
+    if (chunk === 'VP8L') return { w: 1 + ((b(22) << 8 | b(21)) & 0x3fff), h: 1 + ((b(24) << 10 | b(23) << 2 | b(22) >> 6) & 0x3fff) };
+  }
+  if (b(0) === 0xff && b(1) === 0xd8) {
+    var i = 2;
+    while (i + 9 < bytes.length) {
+      if (b(i) !== 0xff) { i++; continue; }
+      var m = b(i + 1);
+      if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: b(i + 5) << 8 | b(i + 6), w: b(i + 7) << 8 | b(i + 8) };
+      i += 2 + (b(i + 2) << 8 | b(i + 3));
+    }
+  }
+  return null;
 }
 
 function classifyPdf(url, label) {
@@ -152,16 +198,28 @@ function parsePage(html, url) {
   if (metaContent(html, 'og:description')) desc.push(metaContent(html, 'og:description'));
   if (desc.length) page.text = desc.join('\n') + '\n\n' + page.text;
 
-  var seenImg = {};
-  function addImg(src, alt, source) {
+  // Images: several sizes of the same photo are merged, keeping the biggest source.
+  var RANK = { link: 4, zoom: 4, 'json-ld': 3, 'og:image': 3, srcset: 2, img: 1 };
+  var byKey = {};
+  function addImg(src, alt, source, cls) {
     src = resolveUrl(src, url);
     if (!src) return;
     var path = src.split('?')[0].toLowerCase();
     if (SKIP_IMG.test(path) || /\.(svg|gif)$/.test(path)) return;
     var canon = canonicalImage(src);
-    if (seenImg[canon]) return;
-    seenImg[canon] = true;
-    page.images.push({ url: canon, fallback: canon !== src ? src : '', alt: stripTags(alt).slice(0, 120), source: source });
+    var key = imageKey(src);
+    var have = byKey[key];
+    if (have) {
+      if ((RANK[source] || 0) > (RANK[have.source] || 0)) {
+        if (have.url !== canon && !have.fallback) have.fallback = have.url;
+        have.url = canon;
+        have.source = source;
+      }
+      if (!have.alt && alt) have.alt = stripTags(alt).slice(0, 120);
+      return;
+    }
+    byKey[key] = { url: canon, fallback: canon !== src ? src : '', alt: stripTags(alt).slice(0, 120), source: source, where: cls || '' };
+    page.images.push(byKey[key]);
   }
   ld.forEach(function (d) {
     [].concat(d.image || []).forEach(function (i) { addImg(typeof i === 'string' ? i : (i && i.url), '', 'json-ld'); });
@@ -171,9 +229,13 @@ function parsePage(html, url) {
   var imgRe = /<img\b[^>]*>/gi;
   while ((m = imgRe.exec(html))) {
     var a = attrsOf(m[0]);
-    var src = a['data-large_image'] || a['data-zoom-image'] || a['data-src'] || a['data-lazy-src'] || a['data-original'] || a.src;
-    if ((!src || /^data:/.test(src)) && (a.srcset || a['data-srcset'])) src = (a.srcset || a['data-srcset']).split(',').pop().trim().split(' ')[0];
-    if (src && !/^data:/.test(src)) addImg(src, a.alt || '', 'img' + (a['class'] ? ' .' + a['class'].slice(0, 60) : ''));
+    var zoom = a['data-large_image'] || a['data-zoom-image'] || a['data-full'] || a['data-full-url'] || a['data-highres'] || a['data-orig-file'];
+    var set = largestFromSrcset(a['data-srcset'] || a.srcset);
+    var src = a['data-src'] || a['data-lazy-src'] || a['data-original'] || a.src;
+    var cls = a['class'] ? a['class'].slice(0, 60) : '';
+    if (src && !/^data:/.test(src)) addImg(src, a.alt || '', 'img', cls);
+    if (set) addImg(set, a.alt || '', 'srcset', cls);
+    if (zoom) addImg(zoom, a.alt || '', 'zoom', cls);
   }
 
   var aRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;

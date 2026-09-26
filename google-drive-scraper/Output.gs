@@ -82,8 +82,8 @@ function productHtml(p, forDoc) {
   var videos = p.saved.videos.map(function (v) { return '<li><a href="' + esc(v.url) + '" class="ltr">' + esc(v.title || v.url) + '</a></li>'; }).join('\n');
   var images = p.saved.images.map(function (im, n) {
     return forDoc
-      ? '<li class="ltr">' + esc(im.file) + '</li>'
-      : '<figure><a href="' + esc(im.file) + '"><img src="' + esc(im.file) + '" alt="' + esc(c.name) + ' - תמונה ' + (n + 1) + '"></a><figcaption class="ltr">' + esc(im.file) + '</figcaption></figure>';
+      ? '<li class="ltr">' + esc(im.file.split('/').pop()) + ' (' + im.width + '×' + im.height + ')</li>'
+      : '<figure><a href="' + esc(im.file) + '"><img src="' + esc(im.file) + '" width="' + im.width + '" height="' + im.height + '" alt="' + esc(c.name) + ' - תמונה ' + (n + 1) + '"></a><figcaption class="ltr">' + esc(im.file.split('/').pop()) + ' · ' + im.width + '×' + im.height + '</figcaption></figure>';
   }).join('\n');
   var doc = function (kind) {
     var d = p.saved.docs.filter(function (x) { return x.kind === kind; })[0];

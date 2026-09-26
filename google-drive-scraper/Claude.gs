@@ -105,7 +105,7 @@ var WRITE_SCHEMA = {
       description: 'technical specifications; Hebrew labels, values as in the source',
       items: { type: 'object', additionalProperties: false, required: ['name', 'value'], properties: { name: { type: 'string' }, value: { type: 'string' } } },
     },
-    image_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of the 3-5 best photos of THIS product (not logos, icons, banners, other products or accessories), best first' },
+    image_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of up to 8 photos of THIS product, best first (the first 3-5 high-resolution ones are kept). No logos, icons, banners, certificates, other products or accessories' },
     brochure_index: { type: 'integer', description: 'index of the PDF that is this product\'s brochure / datasheet / catalogue, or -1' },
     manual_index: { type: 'integer', description: 'index of the PDF that is this product\'s user manual, or -1' },
     video_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of YouTube videos that demonstrate THIS product' },
@@ -140,7 +140,7 @@ function writeParams(settings, p, styleExamples, brochureBase64, feedback) {
   if (p.supplier && p.supplier.text && !p.research.site_is_manufacturer) parts.push('\n=== SUPPLIER PAGE: ' + p.link + ' ===\n' + p.supplier.text);
   var sources = parts.join('\n').slice(0, 60000);
   var lists =
-    '<images>\n' + off.images.map(function (im, i) { return i + '\t' + im.url + '\t' + (im.alt || '') + '\t' + (im.source || ''); }).join('\n') + '\n</images>\n' +
+    '<images>\n' + off.images.map(function (im, i) { return i + '\t' + im.url + '\t' + (im.alt || '') + '\t' + (im.where || ''); }).join('\n') + '\n</images>\n' +
     '<pdfs>\n' + off.pdfs.map(function (d, i) { return i + '\t' + d.url + '\t' + (d.label || ''); }).join('\n') + '\n</pdfs>\n' +
     '<videos>\n' + off.videos.map(function (v, i) { return i + '\t' + v.url + '\t' + (v.title || ''); }).join('\n') + '\n</videos>';
   var content = [];

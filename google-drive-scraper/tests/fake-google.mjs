@@ -40,6 +40,7 @@ class DFolder {
   getFolders() { return iter(this.live(this.folders)); }
   getFoldersByName(n) { return iter(this.live(this.folders).filter((f) => f.name === n)); }
   getFilesByName(n) { return iter(this.live(this.files).filter((f) => f.getName() === n)); }
+  getFiles() { return iter(this.live(this.files)); }
   createFolder(n) { const f = new DFolder(n, this); this.folders.push(f); return f; }
   createFile(blob) { const f = new DFile(this, blob.copyBlob()); this.files.push(f); return f; }
 }

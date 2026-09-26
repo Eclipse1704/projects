@@ -8,6 +8,8 @@ var TICK_BUDGET_MS = 4.5 * 60 * 1000;   // Apps Script stops a run after 6 minut
 var MAX_BATCH_BYTES = 30 * 1024 * 1024;  // UrlFetchApp payload limit is 50MB
 var MAX_PDF_FOR_CLAUDE = 10 * 1024 * 1024;
 var MAX_WRITE_ATTEMPTS = 3;
+var MIN_IMAGE_SIDE = 800;   // px on the long side; smaller images count as low resolution
+var IMAGES_FOLDER = 'תמונות';
 
 var STATUS = {
   queued: 'ממתין בתור',
@@ -276,23 +278,7 @@ function stepSave(settings, p) {
   folder = folder || root.createFolder(stem);
 
   var saved = { images: [], docs: [], videos: [] };
-  var hashes = {};
-  uniqueIndexes(c.image_indexes, off.images.length).forEach(function (i) {
-    if (saved.images.length >= 5) return;
-    var im = off.images[i];
-    var r = fetchUrl(im.url) || (im.fallback ? fetchUrl(im.fallback) : null);
-    if (!r) return;
-    var blob = r.getBlob();
-    var type = String(blob.getContentType() || '').split(';')[0];
-    var ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[type];
-    if (!ext || blob.getBytes().length < 8000) return;
-    var hash = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, blob.getBytes()));
-    if (hashes[hash]) return;
-    hashes[hash] = true;
-    var name = stem + '-' + ('00' + (saved.images.length + 1)).slice(-3) + '.' + ext;
-    replaceFile(folder, name, blob);
-    saved.images.push({ file: name, url: im.url });
-  });
+  saved.images = saveImages(folder, stem, uniqueIndexes(c.image_indexes, off.images.length).map(function (i) { return off.images[i]; }));
   [['brochure', c.brochure_index], ['manual', c.manual_index]].forEach(function (pair) {
     var d = off.pdfs[pair[1]];
     if (!d) return;
@@ -308,6 +294,8 @@ function stepSave(settings, p) {
   p.saved = saved;
 
   if (saved.images.length < 3) p.warnings.push('נמצאו ' + saved.images.length + ' תמונות באתר היצרן (המטרה 3-5)');
+  var small = saved.images.filter(function (im) { return im.small; }).map(function (im) { return im.file.split('/').pop() + ' (' + im.width + '×' + im.height + ')'; });
+  if (small.length) p.warnings.push('תמונות ברזולוציה נמוכה (לא נמצאה גרסה גדולה יותר באתר היצרן): ' + small.join(', '));
   if (!saved.docs.some(function (d) { return d.kind === 'brochure'; })) p.warnings.push('לא נמצא ברושור באתר היצרן');
   if (!saved.docs.some(function (d) { return d.kind === 'manual'; })) p.warnings.push('לא נמצא מדריך למשתמש באתר היצרן');
   if (!saved.videos.length) p.warnings.push('לא נמצא סרטון YouTube באתר היצרן');
@@ -322,6 +310,48 @@ function stepSave(settings, p) {
     name: c.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl, notes: p.warnings.join(' · '),
   });
   setActive(getActive().filter(function (x) { return x !== p.id; }));
+}
+
+// Images go to the product's "תמונות" subfolder, named STEM-001.jpg ... in Claude's order of preference.
+// Only high-resolution files are kept; small ones are used only if there aren't 3 good ones.
+function saveImages(folder, stem, candidates) {
+  var it = folder.getFoldersByName(IMAGES_FOLDER);
+  var dir = it.hasNext() ? it.next() : folder.createFolder(IMAGES_FOLDER);
+  var old = dir.getFiles();
+  while (old.hasNext()) old.next().setTrashed(true);
+
+  var good = [];
+  var small = [];
+  var hashes = {};
+  candidates.forEach(function (im) {
+    if (good.length >= 5) return;
+    var best = null;
+    [im.url, im.fallback].filter(String).forEach(function (u) {
+      if (best && !best.small) return;
+      var r = fetchUrl(u);
+      if (!r) return;
+      var blob = r.getBlob();
+      var bytes = blob.getBytes();
+      var type = String(blob.getContentType() || '').split(';')[0];
+      var ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[type];
+      var size = imageSize(bytes);
+      if (!ext || !size || bytes.length < 5000) return;
+      var hash = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, bytes));
+      if (hashes[hash]) return;
+      var cand = { blob: blob, ext: ext, width: size.w, height: size.h, url: u, hash: hash, small: Math.max(size.w, size.h) < MIN_IMAGE_SIDE };
+      if (!best || cand.width * cand.height > best.width * best.height) best = cand;
+    });
+    if (!best) return;
+    hashes[best.hash] = true;
+    (best.small ? small : good).push(best);
+  });
+  small.sort(function (a, b) { return b.width * b.height - a.width * a.height; });
+  var chosen = good.concat(good.length < 3 ? small.slice(0, 3 - good.length) : []);
+  return chosen.map(function (im, n) {
+    var name = stem + '-' + ('00' + (n + 1)).slice(-3) + '.' + im.ext;
+    replaceFile(dir, name, im.blob);
+    return { file: IMAGES_FOLDER + '/' + name, url: im.url, width: im.width, height: im.height, small: im.small };
+  });
 }
 
 function uniqueIndexes(list, n) {
