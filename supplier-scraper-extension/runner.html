@@ -10,9 +10,8 @@ body{max-width:980px;margin:0 auto;padding:16px}
 #job{margin-bottom:1rem}
 progress{width:100%;height:14px}
 #log{font-size:.82rem;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px 10px;margin:0;list-style:none}
-#pick table,#results table{width:100%;border-collapse:collapse;font-size:.88rem}
-#pick td,#results td,#results th{border-bottom:1px solid var(--line);padding:5px 6px;vertical-align:top}
-#pick td:first-child{width:28px}
+#results table{width:100%;border-collapse:collapse;font-size:.88rem}
+#results td,#results th{border-bottom:1px solid var(--line);padding:5px 6px;vertical-align:top}
 .url{font-size:.75rem;color:var(--muted);direction:ltr;unicode-bidi:embed;word-break:break-all}
 </style>
 </head>
@@ -21,16 +20,9 @@ progress{width:100%;height:14px}
 <div id="job" class="box"></div>
 <progress id="progress" value="0" max="1"></progress>
 
-<section id="pick" hidden>
-  <h2>נמצאו מוצרים. סמנו את המוצרים שרוצים לסרוק:</h2>
-  <p class="hint">הסימון הראשוני לפי סוג המוצר שביקשתם.</p>
-  <div class="row"><button id="all" class="secondary">סמן הכל</button><button id="none" class="secondary">נקה הכל</button><button id="go">המשך ←</button></div>
-  <table><tbody id="pickRows"></tbody></table>
-</section>
-
 <section id="results" hidden>
   <h2>מוצרים</h2>
-  <table><thead><tr><th>מוצר</th><th>תמונות</th><th>סרטונים</th><th>PDF</th><th>סטטוס</th></tr></thead><tbody id="resultRows"></tbody></table>
+  <table><thead><tr><th>מוצר</th><th>יצרן</th><th>תמונות</th><th>סרטונים</th><th>PDF</th><th>סטטוס</th></tr></thead><tbody id="resultRows"></tbody></table>
 </section>
 
 <section id="done" class="box" hidden></section>

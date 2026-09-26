@@ -4,35 +4,20 @@
 <meta charset="utf-8">
 <title>סורק מוצרים</title>
 <link rel="stylesheet" href="ui.css">
-<style>body{width:380px;padding:14px}</style>
+<style>body{width:360px;padding:14px}</style>
 </head>
 <body>
-<h1>סורק מוצרים לווקומרס</h1>
-<div id="site" class="box"></div>
-<div id="nokey" class="box warn" hidden>לא הוגדר מפתח API של Claude. <a href="#" id="openOptions">להגדרות</a></div>
+<h1>סורק מוצרים</h1>
+<div id="nokey" class="box warn" hidden>צריך להגדיר מפתח API של Claude. <a href="#" id="openOptions">להגדרות</a></div>
 
-<label>יצרן <span class="hint">(משמש גם בשמות הקבצים)</span></label>
-<input id="manufacturer" placeholder="FOTRIC">
+<label for="startUrl">אתר</label>
+<input id="startUrl" class="ltr" placeholder="https://www.example.com">
 
-<label>אתרים רשמיים של היצרן <span class="hint">(מופרדים בפסיק; תמונות, קבצים וסרטונים נלקחים רק מהם)</span></label>
-<input id="officialDomains" class="ltr" placeholder="fotric.com">
-
-<label>סוג המוצרים לסריקה <span class="hint">(למשל: מצלמות תרמיות. ריק = הכל)</span></label>
+<label for="productType">סוג מוצר</label>
 <input id="productType" placeholder="מצלמות תרמיות">
 
-<label>קטגוריה בווקומרס <span class="hint">(תת-קטגוריה עם &gt;)</span></label>
-<input id="category" placeholder="מכשירים לאיתור נזילות מים > מצלמות תרמיות">
-
-<label>דף התחלה</label>
-<input id="startUrl" class="ltr">
-
-<label>מספר מוצרים מקסימלי</label>
-<input id="maxProducts" type="number" min="1" value="50">
-
-<div class="row">
-  <button id="single" class="secondary">רק המוצר בדף הזה</button>
-  <button id="catalog">כל המוצרים מהדף הזה</button>
-</div>
+<div class="row"><button id="start">התחל</button></div>
+<p id="msg" class="hint"></p>
 <script type="module" src="popup.js"></script>
 </body>
 </html>

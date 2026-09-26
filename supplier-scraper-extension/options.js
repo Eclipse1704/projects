@@ -1,6 +1,6 @@
 import { loadSettings, saveSettings } from "./lib/settings.js";
 
-const KEYS = ["apiKey", "model", "outputFolder", "publishStatus", "imagesBaseUrl", "styleExampleUrls", "glossary"];
+const KEYS = ["apiKey", "model", "maxProducts", "outputFolder", "publishStatus", "imagesBaseUrl", "styleExampleUrls", "glossary"];
 const settings = await loadSettings();
 for (const k of KEYS) document.getElementById(k).value = settings[k] ?? "";
 

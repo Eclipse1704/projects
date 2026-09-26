@@ -1,32 +1,20 @@
-import { hostOf } from "./lib/common.js";
-import { presetForUrl } from "./lib/presets.js";
 import { loadSettings } from "./lib/settings.js";
 
 const $ = (id) => document.getElementById(id);
-const FIELDS = ["manufacturer", "officialDomains", "productType", "category", "maxProducts"];
-
 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-const url = tab?.url || "";
-const host = hostOf(url);
-const preset = presetForUrl(url);
+const tabUrl = /^https?:/.test(tab?.url || "") ? tab.url : "";
 const settings = await loadSettings();
+const { lastProductType = "" } = await chrome.storage.local.get("lastProductType");
 
-$("site").textContent = preset ? `✓ ספק מוכר: ${preset.manufacturer}` : host ? `אתר: ${host}` : "פתחו אתר של ספק ואז לחצו על התוסף.";
 $("nokey").hidden = !!settings.apiKey;
 $("openOptions").onclick = (ev) => { ev.preventDefault(); chrome.runtime.openOptionsPage(); };
+$("startUrl").value = tabUrl;
+$("productType").value = lastProductType;
+(tabUrl ? $("productType") : $("startUrl")).focus();
 
-// Pre-fill: last values used on this host, else the preset, else the current site.
-const { lastByHost = {} } = await chrome.storage.local.get("lastByHost");
-const last = lastByHost[host] || {};
-$("manufacturer").value = last.manufacturer ?? preset?.manufacturer ?? "";
-$("officialDomains").value = last.officialDomains ?? (preset?.officialDomains || [host.replace(/^www\./, "")]).join(", ");
-$("productType").value = last.productType ?? preset?.productType ?? "";
-$("category").value = last.category ?? "";
-$("maxProducts").value = last.maxProducts ?? 50;
-$("startUrl").value = url;
-
-async function liveHtml(targetUrl) {
-  if (targetUrl !== url || !tab?.id) return null;
+// The current tab's rendered page (covers sites that build their pages with JavaScript).
+async function liveHtml(url) {
+  if (url !== tabUrl || !tab?.id) return null;
   try {
     const [res] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: () => document.documentElement.outerHTML });
     return res?.result || null;
@@ -35,30 +23,16 @@ async function liveHtml(targetUrl) {
   }
 }
 
-async function start(mode) {
-  const job = {
-    mode,
-    startUrl: $("startUrl").value.trim(),
-    manufacturer: $("manufacturer").value.trim(),
-    officialDomains: $("officialDomains").value.split(/[,\s]+/).map((s) => s.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "")).filter(Boolean),
-    productType: $("productType").value.trim(),
-    category: $("category").value.trim(),
-    maxProducts: Math.max(1, parseInt($("maxProducts").value, 10) || 50),
-    downloadsPages: preset?.downloadsPages || [],
-    supplierId: preset?.id || host.replace(/^www\./, "").replace(/[^a-z0-9]+/gi, "-"),
-  };
-  if (!job.manufacturer || !job.startUrl || !job.officialDomains.length) {
-    $("site").textContent = "צריך למלא יצרן, אתר רשמי ודף התחלה.";
-    $("site").className = "box err";
-    return;
-  }
-  lastByHost[host] = Object.fromEntries(FIELDS.map((f) => [f, f === "officialDomains" ? job.officialDomains.join(", ") : job[f]]));
-  job.startHtml = await liveHtml(job.startUrl);
+$("start").onclick = async () => {
+  let startUrl = $("startUrl").value.trim();
+  const productType = $("productType").value.trim();
+  if (startUrl && !/^https?:\/\//.test(startUrl)) startUrl = "https://" + startUrl;
+  try { new URL(startUrl); } catch { $("msg").textContent = "כתובת האתר לא תקינה."; return; }
+  if (!productType) { $("msg").textContent = "כתבו סוג מוצר, למשל: מצלמות תרמיות."; return; }
+  if (!settings.apiKey) { chrome.runtime.openOptionsPage(); return; }
+  const job = { startUrl, productType, startHtml: await liveHtml(startUrl) };
   const id = `job-${Date.now()}`;
-  await chrome.storage.local.set({ lastByHost, [id]: job });
+  await chrome.storage.local.set({ [id]: job, lastProductType: productType });
   await chrome.tabs.create({ url: chrome.runtime.getURL(`runner.html?job=${id}`) });
   window.close();
-}
-
-$("single").onclick = () => start("single");
-$("catalog").onclick = () => start("catalog");
+};

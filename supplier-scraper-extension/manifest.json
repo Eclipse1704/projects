@@ -1,13 +1,28 @@
 {
   "manifest_version": 3,
-  "name": "סורק מוצרים לווקומרס",
+  "name": "סורק מוצרים",
   "short_name": "Product Scraper",
-  "version": "1.0.0",
-  "description": "סורק מוצרים מאתרי ספקים ויצרנים, כותב אותם בעברית ומכין קובץ ייבוא לווקומרס.",
-  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
-  "action": { "default_popup": "popup.html", "default_title": "סורק מוצרים" },
-  "background": { "service_worker": "background.js", "type": "module" },
+  "version": "2.0.0",
+  "description": "נותנים אתר וסוג מוצר, והתוסף סורק את המוצרים, כותב אותם בעברית ומכין דף HTML לכל מוצר וקובץ ייבוא לווקומרס.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "סורק מוצרים"
+  },
   "options_page": "options.html",
-  "permissions": ["activeTab", "scripting", "storage", "unlimitedStorage", "downloads", "tabs"],
-  "host_permissions": ["<all_urls>"]
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "unlimitedStorage",
+    "downloads",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ]
 }

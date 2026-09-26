@@ -4,7 +4,7 @@
 //   127.0.0.1  = manufacturer's official site + fake Claude API
 // Run: npm test
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
@@ -34,20 +34,27 @@ function routes(port) {
   const man = `http://127.0.0.1:${port}`;
   const html = (b) => [b, "text/html; charset=utf-8"];
   return {
+    // Distributor: home page -> categories -> products
+    "localhost/": html(`<html><body><nav>
+      <a href="${sup}/product-category/scopes/">Videoscopes</a><a href="${sup}/product-category/pumps/">Pumps</a>
+      <a href="${sup}/about/">About us</a></nav><main><p>${"Welcome to our shop. ".repeat(30)}</p><img src="a.jpg"><img src="b.jpg"></main></body></html>`),
     "localhost/product-category/scopes/": html(`<html><body><main>
       <a href="${sup}/product/x2000/">X2000 Videoscope</a>
       <a href="${sup}/product/x2000-probe-adapter/">X2000 probe adapter (accessory)</a>
-      <a href="${sup}/product-category/scopes/page/2/">2</a><a href="${sup}/about/">About</a></main></body></html>`),
-    "localhost/product-category/scopes/page/2/": html(`<html><body><a href="${sup}/product/x1000-plus/">X1000 Plus</a></body></html>`),
+      <a href="${sup}/product-category/scopes/page/2/">2</a><p>${"Scopes. ".repeat(80)}</p><img src="a.jpg"><img src="b.jpg"></main></body></html>`),
+    "localhost/product-category/scopes/page/2/": html(`<html><body><main><a href="${sup}/product/x1000-plus/">X1000 Plus</a><p>${"Scopes. ".repeat(80)}</p><img src="a.jpg"><img src="b.jpg"></main></body></html>`),
+    "localhost/product-category/pumps/": html(`<html><body><main><a href="${sup}/product/pump-100/">Pump 100</a><p>${"Pumps. ".repeat(80)}</p><img src="a.jpg"><img src="b.jpg"></main></body></html>`),
     "localhost/product/x2000/": html(`<html><body><main><h1>X2000 Videoscope</h1><p>${"Distributor text. ".repeat(30)}</p>
       <img src="${sup}/img/dist.jpg"><img src="${sup}/img/dist2.jpg"><a href="${sup}/files/x2000-brochure.pdf">Brochure</a>
       <a href="${man}/product/x2000/">Manufacturer page</a></main></body></html>`),
     "localhost/product/x1000-plus/": html(`<html><body><main><h1>X1000 Plus</h1><p>${"Older model. ".repeat(40)}</p><img src="a.jpg"><img src="b.jpg"></main></body></html>`),
     "localhost/product/x2000-probe-adapter/": html(`<html><body><main><h1>Adapter</h1><p>${"Adapter. ".repeat(60)}</p><img src="a.jpg"><img src="b.jpg"></main></body></html>`),
+    "localhost/product/pump-100/": html(`<html><body><main><h1>Pump 100</h1><p>${"Pump. ".repeat(80)}</p><img src="a.jpg"><img src="b.jpg"></main></body></html>`),
     "localhost/img/dist.jpg": [JPEG, "image/jpeg"],
     "localhost/files/x2000-brochure.pdf": [PDF, "application/pdf"],
     "localhost/shop/example-product/": html(`<html><body><main><h1>מצלמה תרמית 640X480 פיקסלים Fotric 348A</h1>
       <p>${"מצלמה תרמית מקצועית לאיתור נזילות ובדיקת לוחות חשמל. ".repeat(8)}</p></main></body></html>`),
+    // Manufacturer's official site
     "127.0.0.1/product/x2000/": html(`<html><head>
       <meta property="og:image" content="${man}/wp-content/uploads/x2000-main-300x300.jpg">
       <script type="application/ld+json">{"@type":"Product","name":"X2000","description":"Industrial videoscope."}</script></head>
@@ -60,32 +67,45 @@ function routes(port) {
       <iframe src="https://www.youtube.com/embed/AbCdEfGhIjK"></iframe>
       <a href="${man}/files/X2000_User_Manual.pdf">User manual</a><a href="${man}/files/X2000-datasheet.pdf">Datasheet</a>
       </main></body></html>`),
+    "127.0.0.1/downloads/": html(`<html><body><main><h1>Downloads</h1><table>
+      <tr><td>X1000 Plus</td><td><a href="${man}/files/X1000-Plus-manual.pdf">Manual</a></td></tr>
+      <tr><td>X2000</td><td><a href="${man}/files/X2000_User_Manual.pdf">Manual</a></td></tr></table><p>${"Downloads. ".repeat(60)}</p></main></body></html>`),
     "127.0.0.1/wp-content/uploads/x2000-main.jpg": [JPEG, "image/jpeg"],
     "127.0.0.1/wp-content/uploads/x2000-side.jpg": [JPEG2, "image/jpeg"],
     "127.0.0.1/wp-content/uploads/x2000-probe.png": [PNG, "image/png"],
     "127.0.0.1/wp-content/uploads/logo.png": [PNG, "image/png"],
     "127.0.0.1/files/X2000_User_Manual.pdf": [PDF, "application/pdf"],
     "127.0.0.1/files/X2000-datasheet.pdf": [PDF, "application/pdf"],
+    "127.0.0.1/files/X1000-Plus-manual.pdf": [PDF, "application/pdf"],
   };
 }
 
-function claudeReply(body) {
+function claudeReply(body, port) {
   const req = JSON.parse(body);
   claudeCalls.push(req);
   const user = JSON.stringify(req.messages);
-  let out;
-  if (user.includes("Select the ones")) {
-    // Pretend Claude kept the real videoscopes and dropped the accessory.
-    const lines = req.messages[0].content.split("\n").filter((l) => /^\d+\t/.test(l));
-    out = { selected: lines.filter((l) => !/adapter/i.test(l)).map((l) => +l.split("\t")[0]) };
-  } else {
-    out = user.includes("X1000") ? { ...HEBREW, name: "וידאוסקופ Mitcorp X1000 Plus" } : HEBREW;
-  }
-  return JSON.stringify({
+  const man = `http://127.0.0.1:${port}`;
+  const text = (out) => JSON.stringify({
     id: "msg_test", type: "message", role: "assistant", model: req.model,
-    content: [{ type: "text", text: JSON.stringify(out) }],
+    content: [{ type: "text", text: typeof out === "string" ? out : JSON.stringify(out) }],
     stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 10, output_tokens: 10 },
   });
+  const listed = () => req.messages[0].content.split("\n").filter((l) => /^\d+\t/.test(l));
+  if (user.includes("Give search keywords")) {
+    return text({ keywords: ["videoscope", "scope", "borescope"], links: listed().filter((l) => /Videoscopes/.test(l)).map((l) => +l.split("\t")[0]) });
+  }
+  if (user.includes("pages of individual products")) {
+    return text({ selected: listed().filter((l) => /X2000 Videoscope|X1000 Plus/.test(l)).map((l) => +l.split("\t")[0]) });
+  }
+  if (req.tools) return text("Research: made by Mitcorp (Taiwan). Official site 127.0.0.1 ...");
+  if (user.includes("Extract the answer into the schema")) {
+    const x2000 = user.includes("X2000");
+    return text({
+      manufacturer: "Mitcorp", model: x2000 ? "X2000" : "X1000 Plus", official_domains: ["127.0.0.1", "localhost"],
+      official_product_url: x2000 ? `${man}/product/x2000/` : "", official_downloads_url: `${man}/downloads/`, site_is_manufacturer: false,
+    });
+  }
+  return text(user.includes("X1000") ? { ...HEBREW, name: "וידאוסקופ Mitcorp X1000 Plus" } : HEBREW);
 }
 
 const server = http.createServer((req, res) => {
@@ -100,7 +120,7 @@ const server = http.createServer((req, res) => {
     req.on("data", (c) => { body += c; });
     req.on("end", () => {
       res.writeHead(200, { "content-type": "application/json", "access-control-allow-origin": "*" });
-      res.end(claudeReply(body));
+      res.end(claudeReply(body, PORT));
     });
     return;
   }
@@ -142,9 +162,8 @@ await bcdp.send("Browser.setDownloadBehavior", { behavior: "default" });
 
 let failed = false;
 try {
-  let [sw] = context.serviceWorkers();
-  if (!sw) sw = await context.waitForEvent("serviceworker");
-  const extId = new URL(sw.url()).host;
+  // Unpacked extension id = first 32 hex chars of sha256(path), mapped 0-f -> a-p.
+  const extId = [...createHash("sha256").update(EXT).digest("hex").slice(0, 32)].map((h) => String.fromCharCode(97 + parseInt(h, 16))).join("");
   const page = await context.newPage();
   page.on("pageerror", (err) => console.error("page error:", err.message));
 
@@ -157,58 +176,62 @@ try {
   await page.waitForSelector("#status:has-text('נשמר')");
   await page.evaluate(async (base) => {
     const { settings } = await chrome.storage.local.get("settings");
+    // Exactly what the popup stores: the site and the product type.
     await chrome.storage.local.set({
       settings: { ...settings, apiBaseUrl: base },
-      "job-test": {
-        mode: "catalog", startUrl: `http://localhost:${new URL(base).port}/product-category/scopes/`, startHtml: null,
-        manufacturer: "Mitcorp", officialDomains: ["127.0.0.1"], productType: "וידאוסקופים", category: "ציוד לבדיקות לא הורסות > וידאוסקופים",
-        maxProducts: 10, downloadsPages: [], supplierId: "mitcorp",
-      },
+      "job-test": { startUrl: `http://localhost:${new URL(base).port}/`, productType: "וידאוסקופים", startHtml: null },
     });
   }, `http://127.0.0.1:${PORT}`);
 
   await page.goto(`chrome-extension://${extId}/runner.html?job=job-test`);
-  await page.waitForSelector("#pick:not([hidden])", { timeout: 60000 });
-  const checked = await page.$$eval("#pickRows tr", (rows) => rows.map((r) => [r.querySelector(".url").textContent, r.querySelector("input").checked]));
-  const byUrl = Object.fromEntries(checked.map(([u, c]) => [new URL(u).pathname, c]));
-  assert.deepEqual(byUrl, { "/product/x2000/": true, "/product/x2000-probe-adapter/": false, "/product/x1000-plus/": true });
-  await page.click("#go");
-  await page.waitForSelector("#done:not([hidden])", { timeout: 180000 });
+  await page.waitForSelector("#done:not([hidden])", { timeout: 300000 });
   const doneText = await page.textContent("#done");
-  assert.match(doneText, /2 מוצרים מוכנים/, doneText);
+  assert.match(doneText, /2 מוצרים מוכנים/, doneText + "\n" + (await page.textContent("#log")));
 
   // Files on disk
   const [runDir] = readdirSync(path.join(downloadDir, "NDT24-import"));
   const base = path.join(downloadDir, "NDT24-import", runDir);
-  assert.match(runDir, /^mitcorp-/);
-  const images = readdirSync(path.join(base, "images")).sort();
-  assert.deepEqual(images, ["MITCORP-X2000-001.jpg", "MITCORP-X2000-002.jpg", "MITCORP-X2000-003.png"]);
-  assert.deepEqual(readdirSync(path.join(base, "docs")).sort(), ["MITCORP-X2000-BROCHURE.pdf", "MITCORP-X2000-MANUAL.pdf"]);
+  assert.match(runDir, /^localhost-/);
+  assert.deepEqual(readdirSync(base).sort(), ["MITCORP-X1000-PLUS", "MITCORP-X2000", "data.json", "index.html", "products.csv"]);
+  const x = path.join(base, "MITCORP-X2000");
+  assert.deepEqual(readdirSync(path.join(x, "images")).sort(), ["MITCORP-X2000-001.jpg", "MITCORP-X2000-002.jpg", "MITCORP-X2000-003.png"]);
+  assert.deepEqual(readdirSync(path.join(x, "docs")).sort(), ["MITCORP-X2000-BROCHURE.pdf", "MITCORP-X2000-MANUAL.pdf"]);
+  assert.deepEqual(readdirSync(path.join(base, "MITCORP-X1000-PLUS", "docs")), ["MITCORP-X1000-PLUS-MANUAL.pdf"], "manual from the official downloads page");
+  assert.ok(!existsSync(path.join(base, "MITCORP-X1000-PLUS", "images")), "no images from the distributor");
+
+  const page1 = readFileSync(path.join(x, "MITCORP-X2000.html"), "utf8");
+  for (const needle of ['lang="he" dir="rtl"', 'id="product-name"', 'id="short-description"', 'id="full-description"', 'id="usage"',
+    'id="specifications"', 'id="videos"', "watch?v=AbCdEfGhIjK", 'src="images/MITCORP-X2000-001.jpg"', 'href="docs/MITCORP-X2000-BROCHURE.pdf"',
+    'href="docs/MITCORP-X2000-MANUAL.pdf"', `http://localhost:${PORT}/product/x2000/`, `http://127.0.0.1:${PORT}/product/x2000/`,
+    "application/ld+json", "IP54"]) assert.ok(page1.includes(needle), `product page has ${needle}`);
+  assert.ok(!page1.includes(`localhost:${PORT}/files`), "distributor PDF must not be used");
+
   const csv = readFileSync(path.join(base, "products.csv"), "utf8");
   assert.ok(csv.startsWith("﻿\"Type\",\"SKU\",\"Name\""));
-  assert.ok(csv.includes("וידאוסקופ תעשייתי Mitcorp X2000"));
-  assert.ok(csv.includes("ציוד לבדיקות לא הורסות > וידאוסקופים"));
-  assert.ok(csv.includes(`http://127.0.0.1:${PORT}/wp-content/uploads/x2000-main.jpg`), "CSV image URLs from official site");
-  assert.ok(csv.includes("<p>https://www.youtube.com/watch?v=AbCdEfGhIjK</p>"));
-  assert.ok(!csv.includes("localhost:" + PORT + "/files"), "distributor PDF must not be used");
-  const preview = readFileSync(path.join(base, "preview.html"), "utf8");
-  assert.ok(preview.includes('lang="he" dir="rtl"') && preview.includes("images/MITCORP-X2000-001.jpg") && preview.includes("IP54"));
+  assert.ok(csv.includes("וידאוסקופ תעשייתי Mitcorp X2000") && csv.includes(`"וידאוסקופים"`));
+  assert.ok(csv.includes(`http://127.0.0.1:${PORT}/wp-content/uploads/x2000-main.jpg`));
+  const index = readFileSync(path.join(base, "index.html"), "utf8");
+  assert.ok(index.includes('href="MITCORP-X2000/MITCORP-X2000.html"'));
 
-  // Claude got the style example + glossary, and structured-output requests
-  const writeCall = claudeCalls.find((c) => c.system);
-  assert.ok(writeCall.system[0].text.includes("מצלמה תרמית מקצועית לאיתור נזילות"), "style example in prompt");
-  assert.ok(writeCall.system[0].text.includes("videoscope = וידאוסקופ"), "glossary in prompt");
-  assert.equal(writeCall.output_config.format.type, "json_schema");
-  assert.equal(writeCall.model, "claude-opus-5");
+  // Claude: only the requested type, web search for the official site, style + glossary + brochure in the writing call
+  const search = claudeCalls.find((c) => c.tools);
+  assert.equal(search.tools[0].type, "web_search_20260209");
+  const writes = claudeCalls.filter((c) => c.system);
+  assert.equal(writes.length, 2);
+  assert.ok(writes[0].system[0].text.includes("מצלמה תרמית מקצועית לאיתור נזילות"), "style example in prompt");
+  assert.ok(writes[0].system[0].text.includes("videoscope = וידאוסקופ"), "glossary in prompt");
+  const x2000Write = writes.find((c) => JSON.stringify(c.messages).includes("X2000"));
+  assert.equal(x2000Write.messages[0].content[0].type, "document", "brochure PDF given to Claude");
+  assert.equal(x2000Write.model, "claude-opus-5");
   if (process.env.SHOTS) {
     await page.setViewportSize({ width: 1000, height: 900 });
     await page.screenshot({ path: path.join(process.env.SHOTS, "runner.png"), fullPage: true });
     const pv = await context.newPage();
     await pv.setViewportSize({ width: 1000, height: 900 });
-    await pv.goto("file://" + path.join(base, "preview.html"));
-    await pv.screenshot({ path: path.join(process.env.SHOTS, "preview.png"), fullPage: true });
+    await pv.goto("file://" + path.join(x, "MITCORP-X2000.html"));
+    await pv.screenshot({ path: path.join(process.env.SHOTS, "product.png"), fullPage: true });
     await pv.goto(`chrome-extension://${extId}/popup.html`);
-    await pv.setViewportSize({ width: 410, height: 640 });
+    await pv.setViewportSize({ width: 390, height: 330 });
     await pv.screenshot({ path: path.join(process.env.SHOTS, "popup.png") });
   }
   console.log("✓ e2e passed:", base);
@@ -221,7 +244,7 @@ try {
   chrome.kill();
   await exited;
   server.close();
-  rmSync(userDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  try { rmSync(userDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch {}
   if (!failed) rmSync(downloadDir, { recursive: true, force: true });
 }
 process.exit(failed ? 1 : 0);

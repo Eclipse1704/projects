@@ -11,7 +11,6 @@ const BROCHURE_WORDS = ["brochure", "datasheet", "data sheet", "data-sheet", "ca
   "prospekt", "spec sheet", "specification", "datenblatt"];
 const SKIP_IMG = /(logo|icon|sprite|placeholder|avatar|badge|flag|payment|banner|favicon|loader|spinner)/i;
 const YT_ID = /(?:youtube(?:-nocookie)?\.com\/(?:embed\/|watch\?v=|v\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
-const PRODUCT_LINK = /\/(products?|produkte?|produits?|product-details)\/[^/?#]+/i;
 const NOISE = "script,style,noscript,nav,header,footer,form,svg,iframe";
 
 export function classifyPdf(url, label) {
@@ -111,12 +110,12 @@ function addUnique(list, item) {
   if (!list.some((x) => x.url === item.url)) list.push(item);
 }
 
-export function emptyRaw(manufacturer) {
-  return { manufacturer, name: "", productPages: [], descriptions: [], specs: [], images: [], videos: [], documents: [], officialLinks: [] };
+export function emptyRaw() {
+  return { manufacturer: "", name: "", productPages: [], descriptions: [], specs: [], images: [], videos: [], documents: [] };
 }
 
-export async function extractPage(job, url, raw, { shopify = null, preRendered = null } = {}) {
-  const official = isOfficial(url, job.officialDomains);
+export async function extractPage(ctx, url, raw, { shopify = null, preRendered = null } = {}) {
+  const official = isOfficial(url, ctx.officialDomains);
   const page = await getPage(url, { preRendered });
   if (!page) return;
   const { doc } = page;
@@ -137,15 +136,7 @@ export async function extractPage(job, url, raw, { shopify = null, preRendered =
   raw.descriptions.push({ source: url, official, text: parts.filter(Boolean).join("\n\n") });
   for (const kv of specs(main)) if (!raw.specs.some(([k, v]) => k === kv[0] && v === kv[1])) raw.specs.push(kv);
 
-  if (!official) {
-    // A distributor page often links to the manufacturer's page for the same product.
-    for (const a of doc.querySelectorAll("a[href]")) {
-      const link = resolve(a.getAttribute("href"), url);
-      if (link && isOfficial(link, job.officialDomains) && PRODUCT_LINK.test(new URL(link).pathname) && !link.includes("category")
-          && !raw.officialLinks.includes(cleanUrl(link))) raw.officialLinks.push(cleanUrl(link));
-    }
-    return; // assets only from the manufacturer's own site
-  }
+  if (!official) return; // images, videos and PDFs only from the manufacturer's own site
 
   // Images: structured sources first (best quality, product-specific), then the page gallery.
   const imgs = [];
@@ -190,41 +181,39 @@ export async function extractPage(job, url, raw, { shopify = null, preRendered =
   }
 }
 
-// PDFs on official "Downloads" pages, matched to products by model name.
-export async function matchDownloadPages(job, raws) {
-  for (const page of job.downloadsPages || []) {
-    if (!isOfficial(page, job.officialDomains)) continue;
-    const got = await getPage(page);
-    if (!got) continue;
-    for (const a of got.doc.querySelectorAll("a[href]")) {
-      const href = resolve(a.getAttribute("href"), page);
-      if (!href || !/\.pdf(\?|$)/i.test(href)) continue;
-      const label = a.textContent.trim();
-      const ctx = a.closest("tr,li,div");
-      const hay = normKey(`${label} ${href} ${ctx?.textContent || ""}`);
-      for (const raw of raws) {
-        const key = normKey(raw.name.replace(new RegExp(escapeRegex(job.manufacturer), "gi"), ""));
-        if (key.length >= 3 && hay.includes(key)) addUnique(raw.documents, { url: href, kind: classifyPdf(href, label), label, sourcePage: page });
-      }
+// PDFs on an official downloads/support page that belong to this product (matched by model name).
+export async function scanDocuments(ctx, pageUrl, raw, modelKey) {
+  if (!pageUrl || !isOfficial(pageUrl, ctx.officialDomains)) return;
+  const got = await getPage(pageUrl);
+  if (!got) return;
+  const pageIsForProduct = modelKey && normKey(pageUrl).includes(modelKey);
+  for (const a of got.doc.querySelectorAll("a[href]")) {
+    const href = resolve(a.getAttribute("href"), pageUrl);
+    if (!href || !/\.pdf(\?|$)/i.test(href)) continue;
+    const label = a.textContent.replace(/\s+/g, " ").trim();
+    const ctxText = a.closest("tr,li,div")?.textContent || "";
+    if (pageIsForProduct || (modelKey.length >= 3 && normKey(`${label} ${href} ${ctxText}`).includes(modelKey))) {
+      addUnique(raw.documents, { url: href, kind: classifyPdf(href, label), label, sourcePage: pageUrl });
     }
   }
 }
 
-// One product may be described on several pages (supplier + manufacturer).
-export async function extractProduct(job, candidate) {
-  const raw = emptyRaw(job.manufacturer);
-  await extractPage(job, candidate.url, raw, { shopify: candidate.shopify, preRendered: candidate.preRendered });
-  const key = normKey(raw.name.replace(new RegExp(escapeRegex(job.manufacturer), "gi"), ""));
-  const visited = new Set(raw.productPages.map((p) => p.url));
-  for (const link of raw.officialLinks) {
+// Links from the supplier page to the manufacturer's page for the same product.
+export async function officialLinksFrom(ctx, supplierUrl, modelKey) {
+  const got = await getPage(supplierUrl);
+  if (!got || !modelKey) return [];
+  const out = new Set();
+  for (const a of got.doc.querySelectorAll("a[href]")) {
+    const link = resolve(a.getAttribute("href"), supplierUrl);
+    if (!link || !isOfficial(link, ctx.officialDomains) || /\.pdf(\?|$)/i.test(link)) continue;
     const seg = normKey(lastSegment(link));
-    if (!visited.has(link) && key && seg && (seg.includes(key) || key.includes(seg))) {
-      await extractPage(job, link, raw);
-      visited.add(link);
-    }
+    if (seg && (seg.includes(modelKey) || (seg.length >= 3 && modelKey.includes(seg)))) out.add(cleanUrl(link));
   }
-  delete raw.officialLinks;
-  return raw;
+  return [...out];
+}
+
+export function modelKeyOf(name, manufacturer) {
+  return normKey(String(name || "").replace(new RegExp(escapeRegex(manufacturer || "\u0000"), "gi"), ""));
 }
 
 // Main text of a page (used for the style examples from the shop's own site).
