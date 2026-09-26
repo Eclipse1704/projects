@@ -1,8 +1,8 @@
 # projects
 Some bash scripts that i have made
 
-## סורק מוצרים (תוסף Chrome)
+## סורק מוצרים ל-Google Drive
 
-נותנים לתוסף אתר וסוג מוצר (למשל "מצלמות תרמיות"), והוא מוצא את המוצרים, כותב אותם בעברית בסגנון של NDT24, ומכין דף HTML לכל מוצר עם תמונות, ברושור ומדריך מאתר היצרן הרשמי, וגם קובץ ייבוא לווקומרס.
+מדביקים קישורים למוצרים בגיליון Google ולוחצים "הרץ". המערכת מוצאת את היצרן ואת האתר הרשמי שלו, כותבת כל מוצר בעברית בסגנון של NDT24, ושומרת לכל מוצר תיקייה ב-Google Drive: דף HTML, 3-5 תמונות, ברושור ומדריך למשתמש.
 
-הוראות התקנה ושימוש: [supplier-scraper-extension/README.md](supplier-scraper-extension/README.md)
+הוראות התקנה ושימוש: [google-drive-scraper/README.md](google-drive-scraper/README.md)

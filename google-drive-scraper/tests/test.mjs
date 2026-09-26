@@ -1,0 +1,186 @@
+// End-to-end test of the Apps Script code under Node, with fake Google services, fake websites
+// and a fake Claude Batches API. Run: node tests/test.mjs
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import vm from "node:vm";
+import { makeGoogle } from "./fake-google.mjs";
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const jpeg = () => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), randomBytes(20000)]);
+const PDF = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(3000, 48)]);
+const IMG = { "maker.test/img/x2000-main.jpg": jpeg(), "maker.test/img/x2000-side.jpg": jpeg(), "maker.test/img/x2000-probe.jpg": jpeg(),
+  "maker.test/img/x2000-case.jpg": jpeg(), "maker.test/img/x1000.jpg": jpeg(), "thermo.test/cdn/226s-a.jpg": jpeg(), "thermo.test/cdn/226s-b.jpg": jpeg(),
+  "thermo.test/cdn/226s-c.jpg": jpeg(), "supplier.test/img/dist.jpg": jpeg() };
+const html = (body) => ({ body: `<!doctype html><html><head><title>t</title></head><body>${body}</body></html>` });
+
+const SITES = {
+  "supplier.test/product/x2000": html(`<nav><a href="/">Home</a></nav><main><h1>X2000 Videoscope</h1>
+    <p>${"Distributor text about the X2000. ".repeat(20)}</p><img src="/img/dist.jpg" alt="x2000">
+    <a href="/files/x2000-brochure.pdf">Brochure</a> <a href="https://maker.test/product/x2000/">Manufacturer page</a></main>`),
+  "maker.test/product/x2000/": html(`<main><h1>X2000</h1>
+    <script type="application/ld+json">{"@type":"Product","name":"X2000","description":"Industrial videoscope with 7 inch screen."}</script>
+    <p>${"Official X2000 description. ".repeat(20)}</p>
+    <div class="gallery"><img src="/img/x2000-main-300x300.jpg" alt="X2000 front"><img data-src="/img/x2000-side.jpg" src="data:image/gif;base64,R0">
+    <img src="/img/x2000-probe.jpg"><img src="/img/x2000-case.jpg"><img src="/img/logo.png"></div>
+    <table><tr><th>Screen</th><td>7" LCD</td></tr><tr><th>Protection</th><td>IP54</td></tr></table>
+    <iframe title="X2000 demo" src="https://www.youtube.com/embed/AbCdEfGhIjK"></iframe>
+    <a href="/files/X2000_User_Manual.pdf">User manual</a> <a href="/files/X2000-datasheet.pdf">Datasheet</a></main>`),
+  "maker.test/product/x1000-plus/": html(`<main><h1>X1000 Plus</h1><p>${"Older model. ".repeat(30)}</p><img src="/img/x1000.jpg"></main>`),
+  "maker.test/downloads/": html(`<main><table><tr><td>X1000 Plus</td><td><a href="/files/X1000-Plus-manual.pdf">Manual</a></td></tr>
+    <tr><td>Other</td><td><a href="/files/other.pdf">Other brochure</a></td></tr></table></main>`),
+  "thermo.test/products/thermal-226s": html(`<main><h1>Thermal Camera 226s</h1><p>${"Handheld thermal camera. ".repeat(20)}</p>
+    <img src="https://thermo.test/cdn/226s-a_800x.jpg"><img src="https://thermo.test/cdn/226s-b.jpg"><img src="https://thermo.test/cdn/226s-c.jpg">
+    <a href="https://youtu.be/ZyXwVuTsRqP">Watch the video</a><a href="/docs/226s-brochure.pdf">Brochure</a></main>`),
+  "www.ndt24.co.il/product/%D7%9E%D7%A6%D7%9C%D7%9E%D7%94-%D7%AA%D7%A8%D7%9E%D7%99%D7%AA-fotric-348a/": html(
+    `<main><h1>מצלמה תרמית 640X480 פיקסלים Fotric 348A</h1><p>${"מצלמה תרמית מקצועית לאיתור נזילות ובדיקת לוחות חשמל. ".repeat(6)}</p></main>`),
+};
+const FILES = {
+  "supplier.test/files/x2000-brochure.pdf": PDF, "maker.test/files/X2000_User_Manual.pdf": PDF, "maker.test/files/X2000-datasheet.pdf": PDF,
+  "maker.test/files/X1000-Plus-manual.pdf": PDF, "thermo.test/docs/226s-brochure.pdf": PDF,
+};
+
+// ---- fake Claude Batches API ----
+const batches = new Map();
+const claudeRequests = [];
+let researchX2000Calls = 0;
+
+function research(params) {
+  const q = params.messages[0].content;
+  const link = q.match(/Product page: (\S+)/)[1];
+  const json = (o) => ({ content: [{ type: "text", text: "Found it.\n```json\n" + JSON.stringify(o) + "\n```" }], stop_reason: "end_turn" });
+  if (link.includes("x2000")) {
+    researchX2000Calls++;
+    if (params.messages.length === 1) return { content: [{ type: "server_tool_use", id: "s1", name: "web_search", input: { query: "X2000" } }], stop_reason: "pause_turn" };
+    return json({ manufacturer: "Mitcorp", model: "X2000", official_domains: ["maker.test", "supplier.test"], official_product_url: "https://maker.test/product/x2000/", official_downloads_url: "", site_is_manufacturer: false });
+  }
+  if (link.includes("thermal-226s")) {
+    return json({ manufacturer: "Thermo", model: "226s", official_domains: ["thermo.test"], official_product_url: link, official_downloads_url: "", site_is_manufacturer: true });
+  }
+  return json({ manufacturer: "Mitcorp", model: "X1000 Plus", official_domains: ["https://www.maker.test/"], official_product_url: "https://maker.test/product/x1000-plus/", official_downloads_url: "https://maker.test/downloads/", site_is_manufacturer: false });
+}
+
+let x2000Writes = 0;
+function write(params) {
+  const text = params.messages[0].content.find((b) => b.type === "text").text;
+  const model = text.match(/Model: (.+)/)[1];
+  const listed = (tag) => (text.match(new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n?</${tag}>`))[1] || "").split("\n").filter(Boolean).map((l) => l.split("\t"));
+  const imgs = listed("images");
+  const pdfs = listed("pdfs");
+  const idx = (re) => { const r = pdfs.find((p) => re.test(p[1] + p[2])); return r ? +r[0] : -1; };
+  let short = `${model} - מכשיר מקצועי לבדיקה.`;
+  if (model === "X2000" && x2000Writes++ === 0) short = "מילה ".repeat(90); // too long -> must be retried
+  const content = {
+    name: `מוצר ${model}`, short_description: short, overview: "סקירה של המוצר.\n\nפסקה שנייה.",
+    usage: ["שימוש ראשון"], features: ["תכונה"], specs: [{ name: "הגנה", value: "IP54" }],
+    image_indexes: imgs.filter((i) => !/logo/.test(i[1])).map((i) => +i[0]).slice(0, 4),
+    brochure_index: idx(/datasheet|brochure/i), manual_index: idx(/manual/i), video_indexes: listed("videos").map((v) => +v[0]),
+  };
+  return { content: [{ type: "text", text: JSON.stringify(content) }], stop_reason: "end_turn" };
+}
+
+function claude(url, opts) {
+  const u = new URL(url);
+  if (opts.headers["x-api-key"] !== "sk-test") return { code: 401, body: { error: { message: "bad key" } } };
+  if (opts.method === "post" && u.pathname === "/v1/messages/batches") {
+    const body = JSON.parse(opts.payload);
+    body.requests.forEach((r) => claudeRequests.push(r));
+    const id = `batch${batches.size + 1}`;
+    batches.set(id, { requests: body.requests, polls: 0 });
+    return { body: { id, processing_status: "in_progress" }, type: "application/json" };
+  }
+  const m = u.pathname.match(/^\/v1\/messages\/batches\/(\w+)$/);
+  if (m) {
+    const b = batches.get(m[1]);
+    b.polls++;
+    return { body: { id: m[1], processing_status: b.polls >= 2 ? "ended" : "in_progress", results_url: `https://api.test/results/${m[1]}` }, type: "application/json" };
+  }
+  const r = u.pathname.match(/^\/results\/(\w+)$/);
+  if (r) {
+    const lines = batches.get(r[1]).requests.map((req) => {
+      const message = req.params.tools ? research(req.params) : write(req.params);
+      return JSON.stringify({ custom_id: req.custom_id, result: { type: "succeeded", message: { type: "message", role: "assistant", ...message } } });
+    });
+    return { body: lines.join("\n"), type: "application/x-jsonlines" };
+  }
+  return null;
+}
+
+function fetchHandler(url, opts) {
+  if (url.startsWith("https://api.test")) return claude(url, opts);
+  const key = url.replace(/^https?:\/\//, "");
+  if (SITES[key]) return SITES[key];
+  if (FILES[key]) return { body: FILES[key], type: "application/pdf" };
+  if (IMG[key]) return { body: IMG[key], type: "image/jpeg" };
+  return null;
+}
+
+// ---- run ----
+const g = makeGoogle({ fetchHandler });
+const ctx = vm.createContext({ ...g.google, JSON, Date, Math, String, Array, Object, RegExp, Error, parseInt, decodeURIComponent, encodeURIComponent });
+const code = readdirSync(ROOT).filter((f) => f.endsWith(".gs")).map((f) => readFileSync(path.join(ROOT, f), "utf8")).join("\n;\n");
+vm.runInContext(code, ctx);
+
+ctx.setup();
+ctx.onOpen();
+g.userProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
+g.scriptProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
+const products = g.sheets.get("מוצרים");
+["https://supplier.test/product/x2000", "https://thermo.test/products/thermal-226s", "https://supplier.test/product/broken"]
+  .forEach((link, i) => products.set(i + 2, 1, link));
+
+ctx.startRun();
+for (let i = 0; i < 30 && JSON.parse(g.scriptProps.getProperty("ACTIVE") || "[]").length; i++) ctx.tick();
+ctx.tick(); // final tick: cleanup + email
+
+// ---- checks ----
+const rows = products.getRange(2, 1, 3, 7).getValues();
+const statusOf = rows.map((r) => r[1]);
+assert.ok(statusOf.every((s) => s.startsWith("✓")), "all done: " + JSON.stringify(rows.map((r) => [r[1], r[5]])));
+assert.deepEqual(rows.map((r) => r[3]), ["Mitcorp", "Thermo", "Mitcorp"]);
+assert.ok(rows.every((r) => String(r[4]).startsWith('=HYPERLINK("https://drive.google.com/drive/folders/')));
+
+const root = g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
+const live = (f) => f.folders.filter((x) => !x.trashed);
+const names = live(root).map((f) => f.name).sort();
+assert.deepEqual(names, ["MITCORP-X1000-PLUS - מוצר X1000 Plus", "MITCORP-X2000 - מוצר X2000", "THERMO-226S - מוצר 226s"], "one folder per product, work folder removed");
+const filesOf = (name) => live(root).find((f) => f.name.startsWith(name)).files.filter((f) => !f.trashed).map((f) => f.getName()).sort();
+assert.deepEqual(filesOf("MITCORP-X2000 "), ["MITCORP-X2000 - תיאור", "MITCORP-X2000-001.jpg", "MITCORP-X2000-002.jpg", "MITCORP-X2000-003.jpg",
+  "MITCORP-X2000-004.jpg", "MITCORP-X2000-BROCHURE.pdf", "MITCORP-X2000-MANUAL.pdf", "MITCORP-X2000.html"]);
+assert.deepEqual(filesOf("THERMO-226S"), ["THERMO-226S - תיאור", "THERMO-226S-001.jpg", "THERMO-226S-002.jpg", "THERMO-226S-003.jpg", "THERMO-226S-BROCHURE.pdf", "THERMO-226S.html"]);
+assert.deepEqual(filesOf("MITCORP-X1000"), ["MITCORP-X1000-PLUS - תיאור", "MITCORP-X1000-PLUS-001.jpg", "MITCORP-X1000-PLUS-MANUAL.pdf", "MITCORP-X1000-PLUS.html"]);
+
+const x2000Folder = live(root).find((f) => f.name.startsWith("MITCORP-X2000 "));
+const page = x2000Folder.files.find((f) => f.getName() === "MITCORP-X2000.html").getBlob().getDataAsString();
+for (const s of ['lang="he" dir="rtl"', 'id="product-name"', 'id="short-description"', 'id="full-description"', 'id="usage"', 'id="specifications"',
+  "watch?v=AbCdEfGhIjK", 'src="MITCORP-X2000-001.jpg"', 'href="MITCORP-X2000-BROCHURE.pdf"', 'href="MITCORP-X2000-MANUAL.pdf"',
+  "https://supplier.test/product/x2000", "(אתר הספק)", "https://maker.test/product/x2000/", "(אתר היצרן הרשמי)", "application/ld+json"]) {
+  assert.ok(page.includes(s), "product page has " + s);
+}
+assert.ok(!page.includes("supplier.test/files") && !page.includes("dist.jpg"), "nothing taken from the distributor");
+const doc = x2000Folder.files.find((f) => f.getName() === "MITCORP-X2000 - תיאור");
+assert.equal(doc.getMimeType(), "application/vnd.google-apps.document");
+
+// Claude usage
+const researchReqs = claudeRequests.filter((r) => r.params.tools);
+assert.deepEqual(researchReqs[0].params.tools.map((t) => t.type), ["web_search_20260209", "web_fetch_20260209"]);
+assert.equal(researchX2000Calls, 2, "pause_turn continued");
+const writes = claudeRequests.filter((r) => r.params.system);
+assert.equal(writes.length, 4, "3 products + 1 retry for the too-long short description");
+assert.ok(writes.find((w) => w.custom_id.endsWith("_write_1")).params.messages[0].content.at(-1).text.includes("short_description has 90 words"));
+assert.ok(writes[0].params.system[0].text.includes("מצלמה תרמית מקצועית לאיתור נזילות"), "NDT24 style example in prompt");
+assert.ok(writes[0].params.system[0].text.includes("videoscope = וידאוסקופ"), "glossary in prompt");
+assert.equal(writes[0].params.output_config.format.type, "json_schema");
+assert.equal(writes[0].params.model, "claude-opus-5");
+const x2000Write = writes.find((w) => w.params.messages[0].content.at(-1).text.includes("Model: X2000"));
+assert.equal(x2000Write.params.messages[0].content[0].type, "document", "official brochure given to Claude");
+assert.ok(!x2000Write.params.messages[0].content.at(-1).text.includes("dist.jpg"), "distributor images never offered");
+
+// Finished cleanly
+assert.equal(g.triggers.length, 0, "trigger removed");
+assert.equal(g.mails.length, 1, "done email");
+// research(3) -> continuation(X2000) ; write(2 ready) -> write(X2000, ready one step later) -> retry(X2000)
+assert.equal(batches.size, 5);
+console.log("✓ all checks passed");
