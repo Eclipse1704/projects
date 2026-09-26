@@ -26,6 +26,7 @@ class DFile {
   getBlob() { return this.blob; }
   getId() { return this.id; }
   getMimeType() { return this.mime; }
+  isTrashed() { return this.trashed; }
   setTrashed(t) { this.trashed = t; return this; }
   setContent(c) { this.blob = new Blob(c, this.blob.type, this.blob.name); return this; }
 }
@@ -38,10 +39,12 @@ class DFolder {
   getId() { return this.id; }
   getUrl() { return `https://drive.google.com/drive/folders/${this.id}`; }
   setTrashed(t) { this.trashed = t; return this; }
-  getFolders() { return iter(this.live(this.folders)); }
-  getFoldersByName(n) { return iter(this.live(this.folders).filter((f) => f.name === n)); }
-  getFilesByName(n) { return iter(this.live(this.files).filter((f) => f.getName() === n)); }
-  getFiles() { return iter(this.live(this.files)); }
+  // Like real DriveApp, these also return items that are in the trash.
+  getFolders() { return iter(this.folders); }
+  getFoldersByName(n) { return iter(this.folders.filter((f) => f.name === n)); }
+  getFilesByName(n) { return iter(this.files.filter((f) => f.getName() === n)); }
+  getFiles() { return iter(this.files); }
+  isTrashed() { return this.trashed; }
   createFolder(n) { const f = new DFolder(n, this); this.folders.push(f); return f; }
   createFile(blobOrName, content, mime) {
     const blob = typeof blobOrName === "string" ? new Blob(content, mime, blobOrName) : blobOrName.copyBlob();
@@ -122,10 +125,17 @@ export function makeGoogle({ fetchHandler }) {
     },
     UrlFetchApp: {
       fetch(url, opts = {}) {
-        log.fetches.push({ url, method: (opts.method || "get").toLowerCase(), payload: opts.payload, headers: opts.headers });
-        const r = fetchHandler(url, opts);
-        if (!r) return response(404, "not found");
-        return response(r.code || 200, r.body, { "Content-Type": r.type || "text/html; charset=utf-8" });
+        if (/[^\x21-\x7e]/.test(url)) throw new Error("Invalid argument: " + url);   // like the real one
+        for (let hop = 0; hop < 10; hop++) {
+          log.fetches.push({ url, method: (opts.method || "get").toLowerCase(), payload: opts.payload, headers: opts.headers });
+          const r = fetchHandler(url, opts);
+          if (!r) return response(404, "not found");
+          if (r.location && opts.followRedirects !== false) { url = new URL(r.location, url).href; continue; }   // followed silently, like the real one
+          const headers = { "Content-Type": r.type || "text/html; charset=utf-8" };
+          if (r.location) headers.Location = r.location;
+          return response(r.code || (r.location ? 302 : 200), r.body || "", headers);
+        }
+        throw new Error("too many redirects");
       },
     },
     DriveApp: {

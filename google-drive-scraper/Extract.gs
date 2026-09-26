@@ -66,10 +66,14 @@ function resolveUrl(href, base) {
 
 function decodeEntities(s) {
   return String(s || '')
-    .replace(/&#(\d+);/g, function (_, n) { return String.fromCharCode(+n); })
-    .replace(/&#x([0-9a-f]+);/gi, function (_, n) { return String.fromCharCode(parseInt(n, 16)); })
+    .replace(/&#(\d+);/g, function (_, n) { return codePoint(+n); })
+    .replace(/&#x([0-9a-f]+);/gi, function (_, n) { return codePoint(parseInt(n, 16)); })
     .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&#039;|&apos;/g, "'")
     .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+
+function codePoint(n) {
+  try { return String.fromCodePoint(n); } catch (e) { return ''; }
 }
 
 function stripTags(s) {
@@ -132,6 +136,8 @@ function pageText(html, maxChars) {
 
 // Turn a thumbnail / resized URL into the original, full-size image URL.
 function canonicalImage(url) {
+  // Images served by a script (getimage.ashx?id=7 ...) need their parameters as they are.
+  if (!/\.(jpe?g|png|webp)(\/|$)/i.test(url.split(/[?#]/)[0])) return url;
   return url
     .replace(/-\d{2,4}x\d{2,4}(?=\.(jpe?g|png|webp)(\?|$))/i, '')                                  // WordPress thumbnails
     .replace(/_(\d{2,4}x\d{0,4}|\d{0,4}x\d{2,4}|pico|icon|thumb|small|compact|medium|large|grande)(?=\.(jpe?g|png|webp))/i, '') // Shopify
@@ -143,6 +149,7 @@ function canonicalImage(url) {
 
 // Same photo in different sizes -> same key.
 function imageKey(url) {
+  if (!/\.(jpe?g|png|webp)(\/|$)/i.test(url.split(/[?#]/)[0])) return url;
   var name = canonicalImage(url).split(/[?#]/)[0].split('/').pop().toLowerCase();
   return name.replace(/\.(jpe?g|png|webp)$/, '').replace(/(-scaled|@\dx|-e\d{10,})$/, '');
 }
@@ -151,9 +158,11 @@ function imageKey(url) {
 function largestFromSrcset(srcset) {
   var best = null;
   var bestW = -1;
-  String(srcset || '').split(/,\s+(?=\S)/).forEach(function (part) {
+  // Split on the commas that end a candidate ("a.jpg 300w,b.jpg 1200w"); URLs may contain commas themselves.
+  String(srcset || '').trim().split(/(?<=\s\d+(?:\.\d+)?[wx])\s*,\s*/i).forEach(function (part) {
     var bits = part.trim().split(/\s+/);
-    var w = parseFloat((bits[1] || '1').replace(/[wx]$/i, '')) * (/x$/i.test(bits[1] || '') ? 1000 : 1);
+    var d = bits[1] || '1x';
+    var w = parseFloat(d) * (/x$/i.test(d) ? 1000 : 1);
     if (bits[0] && w > bestW) { best = bits[0]; bestW = w; }
   });
   return best;
@@ -162,12 +171,12 @@ function largestFromSrcset(srcset) {
 // Pixel size from the file header (JPEG / PNG / WebP), without decoding the image.
 function imageSize(bytes) {
   var b = function (i) { return bytes[i] & 255; };
-  if (b(0) === 0x89 && b(1) === 0x50) return { w: (b(16) << 24 | b(17) << 16 | b(18) << 8 | b(19)) >>> 0, h: (b(20) << 24 | b(21) << 16 | b(22) << 8 | b(23)) >>> 0 };
+  if (b(0) === 0x89 && b(1) === 0x50) return { type: 'image/png', ext: 'png', w: (b(16) << 24 | b(17) << 16 | b(18) << 8 | b(19)) >>> 0, h: (b(20) << 24 | b(21) << 16 | b(22) << 8 | b(23)) >>> 0 };
   if (b(0) === 0x52 && b(8) === 0x57) { // RIFF....WEBP
     var chunk = String.fromCharCode(b(12), b(13), b(14), b(15));
-    if (chunk === 'VP8X') return { w: 1 + (b(24) | b(25) << 8 | b(26) << 16), h: 1 + (b(27) | b(28) << 8 | b(29) << 16) };
-    if (chunk === 'VP8 ') return { w: (b(26) | b(27) << 8) & 0x3fff, h: (b(28) | b(29) << 8) & 0x3fff };
-    if (chunk === 'VP8L') return { w: 1 + ((b(22) << 8 | b(21)) & 0x3fff), h: 1 + ((b(24) << 10 | b(23) << 2 | b(22) >> 6) & 0x3fff) };
+    if (chunk === 'VP8X') return { type: 'image/webp', ext: 'webp', w: 1 + (b(24) | b(25) << 8 | b(26) << 16), h: 1 + (b(27) | b(28) << 8 | b(29) << 16) };
+    if (chunk === 'VP8 ') return { type: 'image/webp', ext: 'webp', w: (b(26) | b(27) << 8) & 0x3fff, h: (b(28) | b(29) << 8) & 0x3fff };
+    if (chunk === 'VP8L') return { type: 'image/webp', ext: 'webp', w: 1 + ((b(22) << 8 | b(21)) & 0x3fff), h: 1 + ((b(24) << 10 | b(23) << 2 | b(22) >> 6) & 0x3fff) };
   }
   if (b(0) === 0xff && b(1) === 0xd8) {
     var i = 2;
@@ -175,7 +184,7 @@ function imageSize(bytes) {
       if (b(i) !== 0xff) { i++; continue; }
       var m = b(i + 1);
       if (m === 0xd8 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) { i += 2; continue; }
-      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { h: b(i + 5) << 8 | b(i + 6), w: b(i + 7) << 8 | b(i + 8) };
+      if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return { type: 'image/jpeg', ext: 'jpg', h: b(i + 5) << 8 | b(i + 6), w: b(i + 7) << 8 | b(i + 8) };
       i += 2 + (b(i + 2) << 8 | b(i + 3));
     }
   }
@@ -183,7 +192,9 @@ function imageSize(bytes) {
 }
 
 function classifyPdf(url, label) {
-  var text = (label + ' ' + decodeURIComponent(String(url).replace(/%(?![0-9a-f]{2})/gi, '%25'))).toLowerCase().replace(/_/g, ' ');
+  var path = String(url);
+  try { path = decodeURIComponent(path); } catch (e) {}   // e.g. Latin-1 "Brosch%FCre.pdf"
+  var text = (label + ' ' + path).toLowerCase().replace(/_/g, ' ');
   if (MANUAL_WORDS.some(function (w) { return text.indexOf(w) >= 0; })) return 'manual';
   if (BROCHURE_WORDS.some(function (w) { return text.indexOf(w) >= 0; })) return 'brochure';
   return 'document';
@@ -194,9 +205,10 @@ function parsePage(html, url) {
   var page = { url: url, title: '', text: pageText(html), images: [], pdfs: [], videos: [], links: [] };
   var h1 = html.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i);
   var ld = jsonLdProducts(html);
-  page.title = (ld[0] && ld[0].name) || (h1 && stripTags(h1[1])) || metaContent(html, 'og:title') || stripTags((html.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]);
+  var ldName = ld[0] && (typeof ld[0].name === 'string' ? ld[0].name : ld[0].name && ld[0].name['@value']);
+  page.title = (ldName && stripTags(ldName)) || (h1 && stripTags(h1[1])) || metaContent(html, 'og:title') || stripTags((html.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]);
   var desc = [];
-  ld.forEach(function (d) { if (d.description) desc.push(stripTags(d.description)); });
+  ld.forEach(function (d) { if (typeof d.description === 'string') desc.push(stripTags(d.description)); });
   if (metaContent(html, 'og:description')) desc.push(metaContent(html, 'og:description'));
   if (desc.length) page.text = desc.join('\n') + '\n\n' + page.text;
 
@@ -206,6 +218,8 @@ function parsePage(html, url) {
   function addImg(src, alt, source, cls) {
     src = resolveUrl(src, url);
     if (!src) return;
+    var next = src.match(/\/_next\/image\?(?:.*&)?url=([^&]+)/);   // Next.js resizer: take the original file
+    if (next) { try { src = resolveUrl(decodeURIComponent(next[1]), url); } catch (e) {} if (!src) return; }
     var path = src.split('?')[0].toLowerCase();
     if (SKIP_IMG.test(path) || /\.(svg|gif)$/.test(path)) return;
     var canon = canonicalImage(src);
@@ -269,10 +283,23 @@ function parsePage(html, url) {
   return page;
 }
 
+// Follows redirects itself so relative links are resolved against the page's real address.
 function fetchPage(url) {
-  var r = fetchUrl(url);
-  if (!r) return null;
+  var r = null;
+  for (var hop = 0; hop < 6; hop++) {
+    r = fetchUrl(url, { followRedirects: false });
+    if (!r) return null;
+    var code = r.getResponseCode();
+    var h = r.getHeaders();
+    var loc = h.Location || h.location;
+    if (code >= 300 && code < 400 && loc) { url = resolveUrl(loc, url); if (!url) return null; continue; }
+    break;
+  }
   var type = String(r.getHeaders()['Content-Type'] || r.getHeaders()['content-type'] || '');
   if (type && !/html|xml/i.test(type)) return null;
-  return parsePage(r.getContentText(), url);
+  var html = r.getContentText();
+  var base = (html.match(/<base\b[^>]*href=["']([^"']+)["']/i) || [])[1];
+  var page = parsePage(html, base ? (resolveUrl(base, url) || url) : url);
+  page.url = url;
+  return page;
 }

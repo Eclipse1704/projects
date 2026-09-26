@@ -84,5 +84,7 @@ FOTRIC-348A - מצלמה תרמית 640X480 פיקסלים Fotric 348A/
 ## בדיקות (למפתחים)
 
 ```bash
-node tests/test.mjs   # מריץ את כל התהליך מול Google, אתרים ו-Claude מדומים
+node tests/test.mjs         # כל התהליך מול Google, אתרים ו-Claude מדומים
+node tests/robustness.mjs   # 27 תרחישי תקלה: מפתח שגוי, עומס ב-Claude, אתר איטי/למטה, הפניות,
+                            # 400 קישורים, קבצים באשפה, עצירה באמצע, ועוד
 ```

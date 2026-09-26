@@ -22,10 +22,18 @@ function fileStem(manufacturer, product) {
 
 var FOLDER_MEMO = {};
 
+// DriveApp's name lookups also return items that are in the trash: take the first one that isn't.
+function firstLive(it) {
+  while (it.hasNext()) {
+    var x = it.next();
+    if (!x.isTrashed()) return x;
+  }
+  return null;
+}
+
 function rootFolder(settings) {
   if (!FOLDER_MEMO.root) {
-    var it = DriveApp.getFoldersByName(settings.rootFolder);
-    FOLDER_MEMO.root = it.hasNext() ? it.next() : DriveApp.createFolder(settings.rootFolder);
+    FOLDER_MEMO.root = firstLive(DriveApp.getFoldersByName(settings.rootFolder)) || DriveApp.createFolder(settings.rootFolder);
   }
   return FOLDER_MEMO.root;
 }
@@ -34,15 +42,14 @@ function rootFolder(settings) {
 function stateFolder(settings) {
   if (!FOLDER_MEMO.state) {
     var root = rootFolder(settings);
-    var it = root.getFoldersByName('_מצב_עבודה');
-    FOLDER_MEMO.state = it.hasNext() ? it.next() : root.createFolder('_מצב_עבודה');
+    FOLDER_MEMO.state = firstLive(root.getFoldersByName('_מצב_עבודה')) || root.createFolder('_מצב_עבודה');
   }
   return FOLDER_MEMO.state;
 }
 
 function replaceFile(folder, name, blob) {
   var it = folder.getFilesByName(name);
-  while (it.hasNext()) it.next().setTrashed(true);
+  while (it.hasNext()) { var f = it.next(); if (!f.isTrashed()) f.setTrashed(true); }
   return folder.createFile(blob.setName(name));
 }
 
@@ -119,7 +126,7 @@ function productHtml(p, forDoc) {
 function saveAsGoogleDoc(folder, name, html) {
   try {
     var it = folder.getFilesByName(name);
-    while (it.hasNext()) it.next().setTrashed(true);
+    while (it.hasNext()) { var f = it.next(); if (!f.isTrashed()) f.setTrashed(true); }
     Drive.Files.create({ name: name, mimeType: 'application/vnd.google-apps.document', parents: [folder.getId()] },
       Utilities.newBlob(html, 'text/html', name + '.html'));
   } catch (e) {

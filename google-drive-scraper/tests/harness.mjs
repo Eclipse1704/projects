@@ -16,7 +16,7 @@ export function loadProject(fetchHandler, { apiKey = "sk-test" } = {}) {
   const fresh = () => vm.runInContext("SETTINGS_MEMO = null; FOLDER_MEMO = {};", ctx);
   const run = (fn, ...args) => { fresh(); return ctx[fn](...args); };
   run("setup");
-  if (apiKey) g.userProps.setProperty("ANTHROPIC_API_KEY", apiKey);
+  if (apiKey) g.scriptProps.setProperty("ANTHROPIC_API_KEY", apiKey);
   g.scriptProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
   const sheet = g.sheets.get("מוצרים");
   return {

@@ -207,6 +207,149 @@ test("many products at once (400 links): no crash on Google's 9KB-per-setting li
   assert.ok(p.rows().every((r) => !/שגיאה/.test(r[1])), p.rows().find((r) => /שגיאה/.test(r[1]))?.[5]);
 });
 
+// ---------- from the independent review ----------
+
+const liveFolders = (f) => f.folders.filter((x) => !x.trashed);
+const rootOf = (p) => p.g.myDrive.folders.find((f) => f.name === "NDT24 - מוצרים" && !f.trashed);
+
+test("a second run after a finished one doesn't use the trashed work folder / trashed product folders", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  const first = liveFolders(rootOf(p)).find((f) => f.name.startsWith("MAKER-A100"));
+  first.setTrashed(true);   // the user deleted the product folder
+  p.sheet.set(2, 2, "");    // ...and runs it again
+  p.run("startRun");
+  p.runUntilIdle();
+  const state = rootOf(p).folders.filter((f) => f.name === "_מצב_עבודה");
+  assert.ok(state.every((f) => f.trashed), "work folder left behind");
+  assert.match(String(p.rows()[0][1]), /✓/, "status " + p.rows()[0][1] + " " + p.rows()[0][5]);
+  const again = liveFolders(rootOf(p)).find((f) => f.name.startsWith("MAKER-A100"));
+  assert.ok(again && again !== first, "saved into the trashed folder");
+});
+
+test("results download keeps failing: the run doesn't loop forever", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject((url, opts) => (url.includes("/results/") ? { code: 500, body: "boom" } : web(claude)(url, opts)));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  const ticks = p.runUntilIdle(60);
+  assert.ok(ticks < 60, "still running after 60 runs");
+  assert.match(String(p.rows()[0][1]), /שגיאה/);
+});
+
+test("a link that redirects: relative image/PDF links resolve against the final address", () => {
+  const claude = fakeClaude((params) => (params.tools ? researchJson({ ...OFFICIAL, official_product_url: "https://maker.test/p/123" }) : hebrew({ image_indexes: [0, 1, 2], brochure_index: 0 })));
+  const p = loadProject(web(claude, {
+    "maker.test/p/123": { code: 301, location: "/en/products/a100/" },
+    "maker.test/en/products/a100/": PAGE(`<main><h1>A100</h1><p>${"Text. ".repeat(40)}</p><img src="img/r1.jpg"><img src="img/r2.jpg"><img src="img/r3.jpg"><a href="docs/A100-brochure.pdf">Brochure</a></main>`),
+    "maker.test/en/products/a100/img/r1.jpg": { body: jpeg(1200, 900), type: "image/jpeg" },
+    "maker.test/en/products/a100/img/r2.jpg": { body: jpeg(1200, 900), type: "image/jpeg" },
+    "maker.test/en/products/a100/img/r3.jpg": { body: jpeg(1200, 900), type: "image/jpeg" },
+    "maker.test/en/products/a100/docs/A100-brochure.pdf": { body: PDF, type: "application/pdf" },
+  }));
+  p.addLinks(["https://maker.test/p/123"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  const row = p.rows()[0];
+  assert.doesNotMatch(String(row[5]), /תמונות|ברושור/, "notes: " + row[5]);
+});
+
+test("Next.js sites (/_next/image?url=...): every photo is kept, at full size", () => {
+  const p = loadProject(() => null);
+  const page = p.ctx.parsePage(`<img src="/_next/image?url=%2Fimg%2Fa1.jpg&w=640&q=75"><img src="/_next/image?url=%2Fimg%2Fa2.jpg&w=640&q=75">
+    <img src="/getimage.ashx?id=7"><img src="/getimage.ashx?id=8">`, "https://x.test/p");
+  assert.equal(JSON.stringify(page.images.map((i) => i.url)),
+    JSON.stringify(["https://x.test/img/a1.jpg", "https://x.test/img/a2.jpg", "https://x.test/getimage.ashx?id=7", "https://x.test/getimage.ashx?id=8"]));
+});
+
+test("images a CDN sends as application/octet-stream are accepted (type read from the file itself)", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude, Object.fromEntries(["a1", "a2", "a3"].map((n) => [`maker.test/i/${n}.jpg`, { body: jpeg(1200, 900), type: "binary/octet-stream" }]))));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  assert.doesNotMatch(String(p.rows()[0][5]), /תמונות/, "notes: " + p.rows()[0][5]);
+});
+
+test("a PDF link with a Latin-1 escape (Brosch%FCre.pdf) doesn't fail the product", () => {
+  const p = loadProject(() => null);
+  const page = p.ctx.parsePage(`<a href="/d/A100-Brosch%FCre.pdf">Broschüre</a>`, "https://x.test/p");
+  assert.equal(page.pdfs.length, 1);
+});
+
+test("re-running a product while the manufacturer's site is down keeps the images it already has", () => {
+  let down = false;
+  const claude = fakeClaude(normal);
+  const base = web(claude);
+  const p = loadProject((url, opts) => (down && /\/i\//.test(url) ? null : base(url, opts)));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  down = true;
+  p.sheet.set(2, 2, "");
+  p.run("startRun");
+  p.runUntilIdle();
+  const folder = liveFolders(rootOf(p)).find((f) => f.name.startsWith("MAKER-A100"));
+  const imgs = liveFolders(folder).find((f) => f.name === "תמונות").files.filter((f) => !f.trashed);
+  assert.equal(imgs.length, 3, "images deleted");
+});
+
+test("'Stop' cancels the jobs already sent to Claude (they cost money)", () => {
+  const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.run("tick");
+  p.run("stopRun");
+  assert.ok(p.g.log.fetches.some((f) => f.method === "post" && /\/cancel$/.test(f.url)), "no cancel request");
+  assert.equal(p.g.triggers.length, 0);
+});
+
+test("a product name starting with '=' is written as text, not a formula", () => {
+  const claude = fakeClaude((params) => (params.tools ? researchJson(OFFICIAL) : hebrew({ name: "=IMPORTXML(1)", image_indexes: [0, 1, 2] })));
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  assert.equal(p.rows()[0][2], "'=IMPORTXML(1)");
+});
+
+test("srcset without spaces after commas: the largest image is chosen", () => {
+  const p = loadProject(() => null);
+  assert.equal(p.ctx.largestFromSrcset("a.jpg 300w,b.jpg 1200w,c.jpg 600w"), "b.jpg");
+  assert.equal(p.ctx.largestFromSrcset("a.jpg 1x, b.jpg 2x"), "b.jpg");
+});
+
+test("Claude's text still invalid after all retries (no product name): error, not a folder named 'undefined'", () => {
+  const claude = fakeClaude((params) => (params.tools ? researchJson(OFFICIAL) : hebrew({ name: "" })));
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  assert.match(String(p.rows()[0][1]), /שגיאה/, "status " + p.rows()[0][1]);
+  assert.ok(!liveFolders(rootOf(p)).some((f) => /undefined| - $/.test(f.name)));
+});
+
+test("text details: emoji entities, JSON-LD names given as objects", () => {
+  const p = loadProject(() => null);
+  assert.equal(p.ctx.decodeEntities("&#128512; &#x1F600;"), "😀 😀");
+  const page = p.ctx.parsePage(`<script type="application/ld+json">{"@type":"Product","name":{"@value":"Model Z"},"description":{"x":1}}</script><h1>h</h1>`, "https://x.test/p");
+  assert.equal(page.title, "Model Z");
+});
+
+test("research jobs are split into batches of at most 20 products", () => {
+  const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
+  const p = loadProject(web(claude));
+  p.addLinks(Array.from({ length: 45 }, (_, i) => "https://maker.test/p/a100?n=" + i));
+  p.run("startRun");
+  for (let i = 0; i < 3; i++) p.run("tick");
+  const sizes = [...claude.batches.values()].map((b) => b.reqs.length);
+  assert.ok(sizes.length >= 3 && sizes.every((n) => n <= 20), "batch sizes " + sizes);
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

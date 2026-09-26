@@ -57,7 +57,8 @@ function readSettings() {
     email: map['שליחת מייל בסיום'] !== 'לא',
     styleUrls: map['דפי דוגמה לסגנון'].split(/\s+/).filter(function (u) { return /^https?:\/\//.test(u); }),
     glossary: map['מילון מונחים'],
-    apiKey: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
+    // Stored for the whole spreadsheet, so the worker runs the same no matter which editor pressed 'run'.
+    apiKey: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY') || PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
     apiBase: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
   };
   return SETTINGS_MEMO;

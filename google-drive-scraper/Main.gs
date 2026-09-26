@@ -8,6 +8,7 @@ var TICK_BUDGET_MS = 4.5 * 60 * 1000;   // Apps Script stops a run after 6 minut
 var STEP_MIN_MS = 100 * 1000;          // don't start a page/download step with less time than this left
 var MAX_STEP_TRIES = 3;               // a step cut off this many times fails with a message
 var MAX_BATCH_BYTES = 30 * 1024 * 1024;  // UrlFetchApp payload limit is 50MB
+var MAX_BATCH_REQUESTS = 20;             // research results include fetched pages: keep the results file well under 50MB
 var MAX_PDF_FOR_CLAUDE = 10 * 1024 * 1024;
 var MAX_WRITE_ATTEMPTS = 3;
 var MIN_IMAGE_SIDE = 800;   // px on the long side; smaller images count as low resolution
@@ -63,11 +64,11 @@ function setup() {
 
 function setApiKey() {
   var ui = SpreadsheetApp.getUi();
-  var r = ui.prompt('מפתח API של Claude', 'הדביקו את המפתח מ-console.anthropic.com (נשמר רק בחשבון שלכם):', ui.ButtonSet.OK_CANCEL);
+  var r = ui.prompt('מפתח API של Claude', 'הדביקו את המפתח מ-console.anthropic.com (נשמר בגיליון הזה בלבד, לא מוצג לאף אחד):', ui.ButtonSet.OK_CANCEL);
   if (r.getSelectedButton() !== ui.Button.OK) return;
   var key = r.getResponseText().trim();
   if (key) {
-    PropertiesService.getUserProperties().setProperty('ANTHROPIC_API_KEY', key);
+    PropertiesService.getScriptProperties().setProperty('ANTHROPIC_API_KEY', key);
     SETTINGS_MEMO = null;
     ui.alert('המפתח נשמר ✓');
   }
@@ -127,10 +128,14 @@ function stopRun() {
   lock.waitLock(60000);
   try {
     deleteTriggers();
+    var settings = readSettings();
+    getBatches().forEach(function (b) {   // stop paying for work that's no longer wanted
+      try { claudeRequest(settings, 'post', '/v1/messages/batches/' + b.id + '/cancel'); } catch (e) {}
+    });
     Object.keys(getStages()).forEach(function (id) { setRowStatus(id, STATUS.stopped); });
     setStages({});
     setBatches([]);
-    stateFolder(readSettings()).setTrashed(true);
+    stateFolder(settings).setTrashed(true);
     FOLDER_MEMO.state = null;
   } finally {
     lock.releaseLock();
@@ -183,16 +188,16 @@ function setBig(key, value) {
 }
 
 function loadState(id) {
-  var it = stateFolder(readSettings()).getFilesByName(id + '.json');
-  return it.hasNext() ? JSON.parse(it.next().getBlob().getDataAsString('UTF-8')) : null;
+  var f = firstLive(stateFolder(readSettings()).getFilesByName(id + '.json'));
+  return f ? JSON.parse(f.getBlob().getDataAsString('UTF-8')) : null;
 }
 
 // Saves the product's state file and its stage. Pass `stages` to batch the property write.
 function saveState(p, stages) {
   var folder = stateFolder(readSettings());
-  var it = folder.getFilesByName(p.id + '.json');
+  var file = firstLive(folder.getFilesByName(p.id + '.json'));
   var json = JSON.stringify(p);
-  if (it.hasNext()) it.next().setContent(json);
+  if (file) file.setContent(json);
   else folder.createFile(p.id + '.json', json, 'application/json');
   var m = stages || getStages();
   if (p.stage === 'done' || p.stage === 'error') delete m[p.id];
@@ -209,16 +214,22 @@ function findRow(id) {
   return 0;
 }
 
+// Text from websites/Claude starting with = + - @ would become a formula.
+function asText(v) {
+  v = String(v === undefined || v === null ? '' : v);
+  return /^[=+\-@]/.test(v) ? "'" + v : v;
+}
+
 function setRowStatus(id, status, extra) {
   var row = findRow(id);
   if (!row) return;
   var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
   sheet.getRange(row, COL.STATUS).setValue(status);
   extra = extra || {};
-  if (extra.name !== undefined) sheet.getRange(row, COL.NAME).setValue(extra.name);
-  if (extra.manufacturer !== undefined) sheet.getRange(row, COL.MANUFACTURER).setValue(extra.manufacturer);
+  if (extra.name !== undefined) sheet.getRange(row, COL.NAME).setValue(asText(extra.name));
+  if (extra.manufacturer !== undefined) sheet.getRange(row, COL.MANUFACTURER).setValue(asText(extra.manufacturer));
   if (extra.folderUrl) sheet.getRange(row, COL.FOLDER).setFormula('=HYPERLINK("' + extra.folderUrl + '","פתח תיקייה")');
-  if (extra.notes !== undefined) sheet.getRange(row, COL.NOTES).setValue(extra.notes);
+  if (extra.notes !== undefined) sheet.getRange(row, COL.NOTES).setValue(asText(extra.notes));
 }
 
 // ---------------- The worker (runs every minute until everything is done) ----------------
@@ -359,7 +370,7 @@ function stepSave(settings, p) {
   var it = root.getFolders();   // re-running a product updates its existing folder
   while (it.hasNext() && !folder) {
     var f = it.next();
-    if (f.getName() === stem || f.getName().indexOf(stem + ' - ') === 0) folder = f;
+    if (!f.isTrashed() && (f.getName() === stem || f.getName().indexOf(stem + ' - ') === 0)) folder = f;
   }
   folder = folder || root.createFolder(stem);
 
@@ -379,6 +390,7 @@ function stepSave(settings, p) {
   uniqueIndexes(c.video_indexes, off.videos.length).forEach(function (i) { saved.videos.push(off.videos[i]); });
   p.saved = saved;
 
+  p.warnings = (p.baseWarnings || (p.baseWarnings = p.warnings.slice())).slice();
   if (saved.images.length < 3) p.warnings.push('נמצאו ' + saved.images.length + ' תמונות באתר היצרן (המטרה 3-5)');
   var small = saved.images.filter(function (im) { return im.small; }).map(function (im) { return im.file.split('/').pop() + ' (' + im.width + '×' + im.height + ')'; });
   if (small.length) p.warnings.push('תמונות ברזולוציה נמוכה (לא נמצאה גרסה גדולה יותר באתר היצרן): ' + small.join(', '));
@@ -400,11 +412,7 @@ function stepSave(settings, p) {
 // Images go to the product's "תמונות" subfolder, named STEM-001.jpg ... in Claude's order of preference.
 // Only high-resolution files are kept; small ones are used only if there aren't 3 good ones.
 function saveImages(folder, stem, candidates) {
-  var it = folder.getFoldersByName(IMAGES_FOLDER);
-  var dir = it.hasNext() ? it.next() : folder.createFolder(IMAGES_FOLDER);
-  var old = dir.getFiles();
-  while (old.hasNext()) old.next().setTrashed(true);
-
+  var dir = firstLive(folder.getFoldersByName(IMAGES_FOLDER)) || folder.createFolder(IMAGES_FOLDER);
   var good = [];
   var small = [];
   var hashes = {};
@@ -417,13 +425,11 @@ function saveImages(folder, stem, candidates) {
       if (!r) return;
       var blob = r.getBlob();
       var bytes = blob.getBytes();
-      var type = String(blob.getContentType() || '').split(';')[0];
-      var ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[type];
-      var size = imageSize(bytes);
-      if (!ext || !size || bytes.length < 5000) return;
+      var size = imageSize(bytes);   // also tells the real format (servers often send a wrong Content-Type)
+      if (!size || bytes.length < 5000) return;
       var hash = Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, bytes));
       if (hashes[hash]) return;
-      var cand = { blob: blob, ext: ext, width: size.w, height: size.h, url: u, hash: hash, small: Math.max(size.w, size.h) < MIN_IMAGE_SIDE };
+      var cand = { blob: blob.setContentType(size.type), ext: size.ext, width: size.w, height: size.h, url: u, hash: hash, small: Math.max(size.w, size.h) < MIN_IMAGE_SIDE };
       if (!best || cand.width * cand.height > best.width * best.height) best = cand;
     });
     if (!best) return;
@@ -432,6 +438,18 @@ function saveImages(folder, stem, candidates) {
   });
   small.sort(function (a, b) { return b.width * b.height - a.width * a.height; });
   var chosen = good.concat(good.length < 3 ? small.slice(0, 3 - good.length) : []);
+
+  var existing = [];
+  var it = dir.getFiles();
+  while (it.hasNext()) { var f = it.next(); if (!f.isTrashed()) existing.push(f); }
+  if (!chosen.length && existing.length) {
+    // Nothing could be downloaded now (site down?): keep the images from the previous run.
+    return existing.sort(function (a, b) { return a.getName() < b.getName() ? -1 : 1; }).map(function (f) {
+      var size = imageSize(f.getBlob().getBytes()) || { w: 0, h: 0 };
+      return { file: IMAGES_FOLDER + '/' + f.getName(), url: '', width: size.w, height: size.h, small: Math.max(size.w, size.h) < MIN_IMAGE_SIDE };
+    });
+  }
+  existing.forEach(function (f) { f.setTrashed(true); });
   return chosen.map(function (im, n) {
     var name = stem + '-' + ('00' + (n + 1)).slice(-3) + '.' + im.ext;
     replaceFile(dir, name, im.blob);
@@ -493,7 +511,7 @@ function submitBatches(settings, kind) {
     }
     var req = { custom_id: p.id + '_' + kind + '_' + (kind === 'research' ? p.researchAttempts + '_' + p.researchPauses : p.writeAttempts), params: params };
     var bytes = JSON.stringify(req).length;
-    if (size + bytes > MAX_BATCH_BYTES) flush();
+    if (size + bytes > MAX_BATCH_BYTES || requests.length >= MAX_BATCH_REQUESTS) flush();
     requests.push(req);
     members.push(p);
     size += bytes;
@@ -526,27 +544,37 @@ function styleExamples(settings) {
   return out;
 }
 
+var MAX_POLL_FAILURES = 10;
+
 function pollBatches(settings) {
   var batches = getBatches();
   if (!batches.length) return;
   var remaining = [];
   batches.forEach(function (b) {
-    var batch;
+    var results;
     try {
-      batch = getBatch(settings, b.id);
+      var batch = getBatch(settings, b.id);
+      if (batch.processing_status !== 'ended') { remaining.push(b); return; }
+      results = batchResults(settings, batch);
     } catch (e) {
-      if (e.status !== 404) remaining.push(b);   // 404: the batch is gone; its products get resubmitted
+      if (e.status === 404) return;   // the batch is gone: its products get resubmitted
+      b.failures = (b.failures || 0) + 1;
+      if (e.status === 401 || e.status === 403 || b.failures >= MAX_POLL_FAILURES) {
+        failMembers(b, new Error('לא הצלחתי לקבל את התוצאות מ-Claude: ' + e.message));
+      } else {
+        remaining.push(b);
+      }
       return;
     }
-    if (batch.processing_status !== 'ended') { remaining.push(b); return; }
     var byId = {};
-    batchResults(settings, batch).forEach(function (line) { byId[line.custom_id.split('_')[0]] = line.result; });
+    results.forEach(function (line) { byId[line.custom_id.split('_')[0]] = line.result; });
     var m = getStages();
     (b.members || []).forEach(function (id) {
-      if (m[id] !== b.kind + '_wait') return;
+      if (m[id] !== b.kind + '_wait') return;   // already handled (e.g. a run was cut off halfway)
       var p = loadState(id);
       if (!p || p.batchId !== b.id) return;
       try {
+        delete p.batchId;
         if (b.kind === 'research') applyResearch(p, byId[p.id]);
         else applyWrite(p, byId[p.id]);
         saveState(p, m);
@@ -558,6 +586,13 @@ function pollBatches(settings) {
     setStages(m);
   });
   setBatches(remaining);
+}
+
+function failMembers(b, e) {
+  (b.members || []).forEach(function (id) {
+    var p = loadState(id);
+    if (p && p.batchId === b.id) fail(p, e);
+  });
 }
 
 // A product waiting for a batch this script no longer tracks (a run was cut off at the wrong moment,
@@ -640,6 +675,8 @@ function applyWrite(p, result) {
     p.stage = 'write_pending';
     return;
   }
+  var fatal = problems.filter(function (x) { return /^missing|not in Hebrew/.test(x); });
+  if (fatal.length) throw new Error('Claude לא החזיר טקסט תקין (' + fatal.join(', ') + ')');
   p.warnings = p.warnings.concat(problems);
   p.content = content;
   p.stage = 'save';
