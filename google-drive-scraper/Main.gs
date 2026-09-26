@@ -5,6 +5,8 @@
 //       -> write (Claude batch: Hebrew text + choose images/PDFs/videos) -> save (Drive folder) -> done
 
 var TICK_BUDGET_MS = 4.5 * 60 * 1000;   // Apps Script stops a run after 6 minutes
+var STEP_MIN_MS = 100 * 1000;          // don't start a page/download step with less time than this left
+var MAX_STEP_TRIES = 3;               // a step cut off this many times fails with a message
 var MAX_BATCH_BYTES = 30 * 1024 * 1024;  // UrlFetchApp payload limit is 50MB
 var MAX_PDF_FOR_CLAUDE = 10 * 1024 * 1024;
 var MAX_WRITE_ATTEMPTS = 3;
@@ -85,56 +87,117 @@ function startRun() {
     SpreadsheetApp.getUi().alert('הדביקו קישורים למוצרים בעמודה "קישור למוצר" (קישור בכל שורה) ואז הריצו שוב.');
     return;
   }
-  var rows = sheet.getRange(2, 1, n, HEADERS.length).getValues();
-  var active = getActive();
+  var lock = LockService.getScriptLock();
+  lock.waitLock(60000);   // the worker may be running right now
   var added = 0;
-  rows.forEach(function (r, i) {
-    var link = String(r[COL.LINK - 1]).trim();
-    var status = String(r[COL.STATUS - 1]).trim();
-    if (!/^https?:\/\//i.test(link) || (status && status !== STATUS.stopped && status.indexOf(STATUS.error) !== 0)) return;
-    var id = 'p' + Date.now().toString(36) + i;
-    sheet.getRange(i + 2, COL.ID).setValue(id);
-    saveState({ id: id, link: link, stage: 'new', writeAttempts: 0, researchAttempts: 0, warnings: [] });
-    active.push(id);
-    setRowStatus(id, STATUS.queued, { notes: '' });
-    added++;
-  });
-  setActive(active);
-  if (!added && !active.length) {
+  try {
+    var range = sheet.getRange(2, 1, n, HEADERS.length);
+    var rows = range.getValues();
+    var stages = getStages();
+    var stamp = Date.now().toString(36);
+    rows.forEach(function (r, i) {
+      var link = String(r[COL.LINK - 1]).trim();
+      var status = String(r[COL.STATUS - 1]).trim();
+      if (!/^https?:\/\//i.test(link) || (status && status !== STATUS.stopped && status.indexOf(STATUS.error) !== 0)) return;
+      var id = 'p' + stamp + 'r' + (i + 2);
+      r[COL.ID - 1] = id;
+      r[COL.STATUS - 1] = STATUS.queued;
+      r[COL.NOTES - 1] = '';
+      saveState({ id: id, link: link, stage: 'new', writeAttempts: 0, researchAttempts: 0, researchPauses: 0, stepTries: {}, warnings: [] }, stages);
+      added++;
+    });
+    // One write for the whole sheet (only the status, notes and id columns change).
+    [COL.STATUS, COL.NOTES, COL.ID].forEach(function (c) {
+      sheet.getRange(2, c, n, 1).setValues(rows.map(function (r) { return [r[c - 1]]; }));
+    });
+    setStages(stages);
+  } finally {
+    lock.releaseLock();
+  }
+  if (!added) {
     SpreadsheetApp.getUi().alert('אין קישורים חדשים להרצה. (שורות שכבר הושלמו לא רצות שוב; כדי להריץ שוב מוחקים את הסטטוס.)');
     return;
   }
-  ensureTrigger();
-  SpreadsheetApp.getActive().toast(added + ' מוצרים נכנסו לתור. אפשר לסגור את הגיליון, העבודה ממשיכה ברקע.', 'סורק מוצרים', 10);
-  tick();
+  setTriggerEvery(1);
+  SpreadsheetApp.getActive().toast(added + ' מוצרים נכנסו לתור. העבודה מתחילה תוך דקה וממשיכה ברקע - אפשר לסגור את הגיליון.', 'סורק מוצרים', 10);
 }
 
 function stopRun() {
-  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'tick') ScriptApp.deleteTrigger(t); });
-  getActive().forEach(function (id) { setRowStatus(id, STATUS.stopped); });
-  setActive([]);
-  PropertiesService.getScriptProperties().deleteProperty('BATCHES');
+  var lock = LockService.getScriptLock();
+  lock.waitLock(60000);
+  try {
+    deleteTriggers();
+    Object.keys(getStages()).forEach(function (id) { setRowStatus(id, STATUS.stopped); });
+    setStages({});
+    setBatches([]);
+    stateFolder(readSettings()).setTrashed(true);
+    FOLDER_MEMO.state = null;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
-function ensureTrigger() {
-  var has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; });
-  if (!has) ScriptApp.newTrigger('tick').timeBased().everyMinutes(1).create();
+function deleteTriggers() {
+  ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'tick') ScriptApp.deleteTrigger(t); });
+  PropertiesService.getScriptProperties().deleteProperty('TRIGGER_EVERY');
 }
+
+// Every minute while there is work to do here; every 5 minutes while only waiting for Claude
+// (saves the daily trigger-time quota).
+function setTriggerEvery(minutes) {
+  var props = PropertiesService.getScriptProperties();
+  var has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; });
+  if (has && props.getProperty('TRIGGER_EVERY') === String(minutes)) return;
+  deleteTriggers();
+  ScriptApp.newTrigger('tick').timeBased().everyMinutes(minutes).create();
+  props.setProperty('TRIGGER_EVERY', String(minutes));
+}
+
+function ensureTrigger() { setTriggerEvery(1); }
 
 // ---------------- State ----------------
 
-function getActive() { return JSON.parse(PropertiesService.getScriptProperties().getProperty('ACTIVE') || '[]'); }
-function setActive(a) { PropertiesService.getScriptProperties().setProperty('ACTIVE', JSON.stringify(a)); }
-function getBatches() { return JSON.parse(PropertiesService.getScriptProperties().getProperty('BATCHES') || '[]'); }
-function setBatches(b) { PropertiesService.getScriptProperties().setProperty('BATCHES', JSON.stringify(b)); }
+// Where each active product is ({id: stage}), kept in Script Properties so a run can see what needs
+// work without opening every product's state file.
+function getStages() { return JSON.parse(getBig('STAGES') || '{}'); }
+function setStages(m) { setBig('STAGES', JSON.stringify(m)); }
+function getBatches() { return JSON.parse(getBig('BATCHES') || '[]'); }
+function setBatches(b) { setBig('BATCHES', JSON.stringify(b)); }
+
+// Script Properties hold at most 9KB per value: long values are split into numbered parts.
+var PART_CHARS = 2500;   // Hebrew/UTF-8 safe: 2500 chars <= 9KB
+function getBig(key) {
+  var props = PropertiesService.getScriptProperties();
+  var n = parseInt(props.getProperty(key + '_parts') || '0', 10);
+  var out = '';
+  for (var i = 0; i < n; i++) out += props.getProperty(key + '_' + i) || '';
+  return out;
+}
+function setBig(key, value) {
+  var props = PropertiesService.getScriptProperties();
+  var old = parseInt(props.getProperty(key + '_parts') || '0', 10);
+  var n = Math.ceil(value.length / PART_CHARS);
+  for (var i = 0; i < n; i++) props.setProperty(key + '_' + i, value.slice(i * PART_CHARS, (i + 1) * PART_CHARS));
+  for (var j = n; j < old; j++) props.deleteProperty(key + '_' + j);
+  props.setProperty(key + '_parts', String(n));
+}
 
 function loadState(id) {
   var it = stateFolder(readSettings()).getFilesByName(id + '.json');
   return it.hasNext() ? JSON.parse(it.next().getBlob().getDataAsString('UTF-8')) : null;
 }
 
-function saveState(p) {
-  replaceFile(stateFolder(readSettings()), p.id + '.json', Utilities.newBlob(JSON.stringify(p), 'application/json'));
+// Saves the product's state file and its stage. Pass `stages` to batch the property write.
+function saveState(p, stages) {
+  var folder = stateFolder(readSettings());
+  var it = folder.getFilesByName(p.id + '.json');
+  var json = JSON.stringify(p);
+  if (it.hasNext()) it.next().setContent(json);
+  else folder.createFile(p.id + '.json', json, 'application/json');
+  var m = stages || getStages();
+  if (p.stage === 'done' || p.stage === 'error') delete m[p.id];
+  else m[p.id] = p.stage;
+  if (!stages) setStages(m);
 }
 
 function findRow(id) {
@@ -160,22 +223,30 @@ function setRowStatus(id, status, extra) {
 
 // ---------------- The worker (runs every minute until everything is done) ----------------
 
+var DEADLINE = 0;
+function timeLeft() { return DEADLINE - Date.now(); }
+
 function tick() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return;
-  var started = Date.now();
+  DEADLINE = Date.now() + TICK_BUDGET_MS;
   try {
     var settings = readSettings();
     pollBatches(settings);
-    var active = getActive();
-    // Local steps (fetching pages, saving files) - as many as fit in this run.
-    for (var i = 0; i < active.length && Date.now() - started < TICK_BUDGET_MS; i++) {
-      var p = loadState(active[i]);
-      if (!p || ['new', 'official', 'save'].indexOf(p.stage) < 0) continue;
-      runLocalStep(settings, p);
-    }
+    recoverLostWaits();
+    var stages = getStages();
+    // Local steps (reading pages, saving files) - as many as fit in this run.
+    Object.keys(stages).forEach(function (id) {
+      if (['new', 'official', 'save'].indexOf(stages[id]) < 0 || timeLeft() < STEP_MIN_MS) return;
+      var p = loadState(id);
+      if (p) runLocalStep(settings, p);
+      else forget(id);
+    });
     submitBatches(settings, 'research');
-    if (Date.now() - started < TICK_BUDGET_MS) submitBatches(settings, 'write');
+    submitBatches(settings, 'write');
+    var left = getStages();
+    var busy = Object.keys(left).some(function (id) { return !/_wait$/.test(left[id]); });
+    if (Object.keys(left).length) setTriggerEvery(busy ? 1 : 5);
     finishIfDone(settings);
   } finally {
     lock.releaseLock();
@@ -183,6 +254,13 @@ function tick() {
 }
 
 function runLocalStep(settings, p) {
+  p.stepTries = p.stepTries || {};
+  p.stepTries[p.stage] = (p.stepTries[p.stage] || 0) + 1;
+  if (p.stepTries[p.stage] > MAX_STEP_TRIES) {
+    fail(p, new Error('השלב נקטע שוב ושוב (האתר איטי מדי או הקבצים גדולים מדי). אפשר לנסות להריץ שוב מאוחר יותר.'));
+    return;
+  }
+  saveState(p);   // count the try before starting: if Google cuts this run off, the next run knows
   try {
     if (p.stage === 'new') stepSupplier(p);
     else if (p.stage === 'official') stepOfficial(p);
@@ -194,12 +272,18 @@ function runLocalStep(settings, p) {
   saveState(p);
 }
 
+// Drop a product whose state file is gone, so it can't keep the worker running.
+function forget(id) {
+  var m = getStages();
+  delete m[id];
+  setStages(m);
+}
+
 function fail(p, e) {
   p.stage = 'error';
   p.error = String(e && e.message || e);
   saveState(p);
   setRowStatus(p.id, STATUS.error, { notes: p.error });
-  setActive(getActive().filter(function (x) { return x !== p.id; }));
 }
 
 // 1. Read the page the user linked to.
@@ -267,7 +351,9 @@ function stepOfficial(p) {
 function stepSave(settings, p) {
   var c = p.content;
   var off = p.official;
-  var stem = fileStem(p.research.manufacturer, p.research.model || (p.supplier && p.supplier.title) || 'product');
+  var stem = fileStem(p.research.manufacturer, p.research.model || (p.supplier && p.supplier.title) || '');
+  // Without a known manufacturer/model the name isn't unique: add the product's id.
+  if (!p.research.manufacturer || !p.research.model) stem += '-' + p.id.toUpperCase();
   var root = rootFolder(settings);
   var folder = null;
   var it = root.getFolders();   // re-running a product updates its existing folder
@@ -309,7 +395,6 @@ function stepSave(settings, p) {
   setRowStatus(p.id, p.warnings.length ? STATUS.doneNotes : STATUS.done, {
     name: c.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl, notes: p.warnings.join(' · '),
   });
-  setActive(getActive().filter(function (x) { return x !== p.id; }));
 }
 
 // Images go to the product's "תמונות" subfolder, named STEM-001.jpg ... in Claude's order of preference.
@@ -363,33 +448,50 @@ function uniqueIndexes(list, n) {
 // ---------------- Claude batches ----------------
 
 function submitBatches(settings, kind) {
-  var pending = getActive().map(loadState).filter(function (p) { return p && p.stage === kind + '_pending'; });
-  if (!pending.length) return;
+  var stages = getStages();
+  var ids = Object.keys(stages).filter(function (id) { return stages[id] === kind + '_pending'; });
+  if (!ids.length || timeLeft() < 30000) return;
   var style = kind === 'write' ? styleExamples(settings) : null;
   var requests = [];
-  var size = 0;
   var members = [];
+  var size = 0;
+  var stop = false;
   var flush = function () {
-    if (!requests.length) return;
-    var id = submitBatch(settings, requests);
-    setBatches(getBatches().concat([{ id: id, kind: kind }]));
-    members.forEach(function (p) { p.stage = kind + '_wait'; p.batchId = id; saveState(p); });
-    requests = []; size = 0; members = [];
+    if (!requests.length || stop) return;
+    var id;
+    try {
+      id = submitBatch(settings, requests);
+    } catch (e) {
+      if (e.status && e.status < 500 && e.status !== 408 && e.status !== 429) members.forEach(function (p) { fail(p, e); });
+      else stop = true;   // overloaded / network: try again on the next run
+      requests = []; members = []; size = 0;
+      return;
+    }
+    setBatches(getBatches().concat([{ id: id, kind: kind, members: members.map(function (p) { return p.id; }) }]));
+    var m = getStages();
+    members.forEach(function (p) { p.stage = kind + '_wait'; p.batchId = id; saveState(p, m); });
+    setStages(m);
+    requests = []; members = []; size = 0;
   };
-  pending.forEach(function (p) {
+  ids.forEach(function (pid) {
+    if (stop || timeLeft() < 30000) return;
+    var p = loadState(pid);
+    if (!p) { forget(pid); return; }
     var params;
     try {
       if (kind === 'research') {
         params = researchParams(settings, p);
-        if (p.researchContinuation) params.messages = params.messages.concat(p.researchContinuation);
+        if (p.researchContinuation) params.messages = params.messages.concat([p.researchContinuation]);
       } else {
-        params = writeParams(settings, p, style, brochureForClaude(p), p.writeFeedback);
+        var brochure = p.skipBrochure ? null : brochureForClaude(p);
+        p.lastWriteHadBrochure = !!brochure;
+        params = writeParams(settings, p, style, brochure, p.writeFeedback);
       }
     } catch (e) {
       fail(p, e);
       return;
     }
-    var req = { custom_id: p.id + '_' + kind + '_' + (kind === 'research' ? p.researchAttempts : p.writeAttempts), params: params };
+    var req = { custom_id: p.id + '_' + kind + '_' + (kind === 'research' ? p.researchAttempts + '_' + p.researchPauses : p.writeAttempts), params: params };
     var bytes = JSON.stringify(req).length;
     if (size + bytes > MAX_BATCH_BYTES) flush();
     requests.push(req);
@@ -433,25 +535,46 @@ function pollBatches(settings) {
     try {
       batch = getBatch(settings, b.id);
     } catch (e) {
-      remaining.push(b);
+      if (e.status !== 404) remaining.push(b);   // 404: the batch is gone; its products get resubmitted
       return;
     }
     if (batch.processing_status !== 'ended') { remaining.push(b); return; }
     var byId = {};
     batchResults(settings, batch).forEach(function (line) { byId[line.custom_id.split('_')[0]] = line.result; });
-    getActive().forEach(function (id) {
+    var m = getStages();
+    (b.members || []).forEach(function (id) {
+      if (m[id] !== b.kind + '_wait') return;
       var p = loadState(id);
       if (!p || p.batchId !== b.id) return;
       try {
         if (b.kind === 'research') applyResearch(p, byId[p.id]);
         else applyWrite(p, byId[p.id]);
-        saveState(p);
+        saveState(p, m);
       } catch (e) {
         fail(p, e);
+        m = getStages();
       }
     });
+    setStages(m);
   });
   setBatches(remaining);
+}
+
+// A product waiting for a batch this script no longer tracks (a run was cut off at the wrong moment,
+// or the batch disappeared) goes back to the queue instead of waiting forever.
+function recoverLostWaits() {
+  var stages = getStages();
+  var tracked = {};
+  getBatches().forEach(function (b) { (b.members || []).forEach(function (id) { tracked[id] = true; }); });
+  var changed = false;
+  Object.keys(stages).forEach(function (id) {
+    if (!/_wait$/.test(stages[id]) || tracked[id]) return;
+    stages[id] = stages[id].replace(/_wait$/, '_pending');
+    var p = loadState(id);
+    if (p) { p.stage = stages[id]; saveState(p, stages); }
+    changed = true;
+  });
+  if (changed) setStages(stages);
 }
 
 function resultError(result) {
@@ -461,18 +584,24 @@ function resultError(result) {
 }
 
 function applyResearch(p, result) {
-  p.researchAttempts++;
   if (!result || result.type !== 'succeeded') {
+    p.researchAttempts++;
+    p.researchContinuation = null;
     if (p.researchAttempts < 3) { p.stage = 'research_pending'; return; }
     throw new Error('Claude: ' + resultError(result));
   }
   var msg = result.message;
-  if (msg.stop_reason === 'pause_turn' && p.researchAttempts < 4) {
-    p.researchContinuation = (p.researchContinuation || []).concat([{ role: 'assistant', content: msg.content }]);
+  // The web search hit its step limit: send the conversation back so Claude continues where it stopped.
+  // All paused turns are one assistant message (the API needs user/assistant to alternate).
+  if (msg.stop_reason === 'pause_turn' && (p.researchPauses || 0) < 5) {
+    p.researchPauses = (p.researchPauses || 0) + 1;
+    var before = p.researchContinuation ? p.researchContinuation.content : [];
+    p.researchContinuation = { role: 'assistant', content: before.concat(msg.content) };
     p.stage = 'research_pending';
     return;
   }
   var r = parseResearch(msg);
+  if (!r) p.researchAttempts++;
   if (!r && p.researchAttempts < 3) {
     p.researchContinuation = null;
     p.stage = 'research_pending';
@@ -486,6 +615,14 @@ function applyResearch(p, result) {
 
 function applyWrite(p, result) {
   p.writeAttempts++;
+  if (result && result.type === 'errored' && p.lastWriteHadBrochure) {
+    // Most likely the brochure PDF (too many pages, encrypted, ...): write without it.
+    p.skipBrochure = true;
+    p.writeAttempts--;
+    p.warnings.push('Claude לא הצליח לקרוא את הברושור; הטקסט נכתב לפי אתרי היצרן והספק');
+    p.stage = 'write_pending';
+    return;
+  }
   if (!result || result.type !== 'succeeded' || result.message.stop_reason === 'refusal') {
     if (p.writeAttempts < MAX_WRITE_ATTEMPTS) { p.stage = 'write_pending'; return; }
     throw new Error('Claude: ' + (result && result.type === 'succeeded' ? 'refusal' : resultError(result)));
@@ -510,9 +647,9 @@ function applyWrite(p, result) {
 }
 
 function finishIfDone(settings) {
-  if (getActive().length || getBatches().length) return;
+  if (Object.keys(getStages()).length || getBatches().length) return;
   var had = ScriptApp.getProjectTriggers().filter(function (t) { return t.getHandlerFunction() === 'tick'; });
-  had.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  deleteTriggers();
   stateFolder(settings).setTrashed(true);
   FOLDER_MEMO.state = null;
   if (!had.length || !settings.email) return;

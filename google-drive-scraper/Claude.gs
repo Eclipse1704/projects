@@ -16,7 +16,9 @@ function claudeRequest(settings, method, path, body) {
   if (code >= 400) {
     var msg = text;
     try { msg = JSON.parse(text).error.message; } catch (e) {}
-    throw new Error('Claude API ' + code + ': ' + msg);
+    var err = new Error('Claude API ' + code + ': ' + msg + (code === 401 ? ' (מפתח ה-API לא תקין - סורק מוצרים ← הגדרת מפתח API)' : ''));
+    err.status = code;
+    throw err;
   }
   return text ? JSON.parse(text) : {};
 }

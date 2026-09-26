@@ -145,8 +145,7 @@ const products = g.sheets.get("מוצרים");
   .forEach((link, i) => products.set(i + 2, 1, link));
 
 ctx.startRun();
-for (let i = 0; i < 30 && JSON.parse(g.scriptProps.getProperty("ACTIVE") || "[]").length; i++) ctx.tick();
-ctx.tick(); // final tick: cleanup + email
+for (let i = 0; i < 40 && g.triggers.length; i++) ctx.tick();
 
 // ---- checks ----
 const rows = products.getRange(2, 1, 3, 7).getValues();

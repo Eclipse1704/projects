@@ -27,6 +27,7 @@ class DFile {
   getId() { return this.id; }
   getMimeType() { return this.mime; }
   setTrashed(t) { this.trashed = t; return this; }
+  setContent(c) { this.blob = new Blob(c, this.blob.type, this.blob.name); return this; }
 }
 
 class DFolder {
@@ -42,7 +43,10 @@ class DFolder {
   getFilesByName(n) { return iter(this.live(this.files).filter((f) => f.getName() === n)); }
   getFiles() { return iter(this.live(this.files)); }
   createFolder(n) { const f = new DFolder(n, this); this.folders.push(f); return f; }
-  createFile(blob) { const f = new DFile(this, blob.copyBlob()); this.files.push(f); return f; }
+  createFile(blobOrName, content, mime) {
+    const blob = typeof blobOrName === "string" ? new Blob(content, mime, blobOrName) : blobOrName.copyBlob();
+    const f = new DFile(this, blob); this.files.push(f); return f;
+  }
 }
 
 class Range {
@@ -75,7 +79,16 @@ export function makeGoogle({ fetchHandler }) {
     getUrl: () => "https://docs.google.com/spreadsheets/d/test",
     toast: () => {},
   };
-  const props = () => { const m = new Map(); return { getProperty: (k) => m.get(k) ?? null, setProperty: (k, v) => m.set(k, String(v)), deleteProperty: (k) => m.delete(k), m }; };
+  const props = () => {
+    const m = new Map();
+    return {
+      getProperty: (k) => m.get(k) ?? null,
+      setProperty: (k, v) => { if (Buffer.byteLength(String(v)) > 9 * 1024) throw new Error("Argument too large: value"); m.set(k, String(v)); }, // real limit: 9KB per value
+      deleteProperty: (k) => m.delete(k),
+      getKeys: () => [...m.keys()],
+      m,
+    };
+  };
   const userProps = props();
   const scriptProps = props();
   const myDrive = new DFolder("My Drive");
@@ -138,9 +151,9 @@ export function makeGoogle({ fetchHandler }) {
     },
     PropertiesService: { getUserProperties: () => userProps, getScriptProperties: () => scriptProps },
     CacheService: { getScriptCache: () => ({ get: (k) => cache.get(k) ?? null, put: (k, v) => cache.set(k, v) }) },
-    LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock: () => {} }) },
+    LockService: { getScriptLock: () => ({ tryLock: () => true, waitLock: () => {}, releaseLock: () => {} }) },
     ScriptApp: {
-      newTrigger: (fn) => ({ timeBased: () => ({ everyMinutes: () => ({ create: () => { const t = { getHandlerFunction: () => fn }; triggers.push(t); return t; } }) }) }),
+      newTrigger: (fn) => ({ timeBased: () => ({ everyMinutes: (n) => ({ create: () => { const t = { getHandlerFunction: () => fn, minutes: n }; triggers.push(t); return t; } }) }) }),
       getProjectTriggers: () => [...triggers],
       deleteTrigger: (t) => { const i = triggers.indexOf(t); if (i >= 0) triggers.splice(i, 1); },
     },

@@ -9,6 +9,8 @@ var BROCHURE_WORDS = ['brochure', 'datasheet', 'data sheet', 'data-sheet', 'cata
   'prospekt', 'spec sheet', 'specification', 'datenblatt'];
 
 function fetchUrl(url, extra) {
+  // Spaces, Hebrew letters etc. must be percent-encoded (already-encoded %XX stays as is).
+  url = String(url).replace(/[^\x21-\x7e]+/g, function (c) { return encodeURIComponent(c); });
   var opts = { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' } };
   for (var k in (extra || {})) opts[k] = extra[k];
   try {
@@ -116,7 +118,7 @@ function jsonLdProducts(html) {
 // Page text with a little structure (headings, list items, table cells), for Claude.
 function pageText(html, maxChars) {
   var s = String(html)
-    .replace(/<(script|style|noscript|svg|nav|header|footer|form|iframe)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<(script|style|noscript|svg|nav|header|footer|iframe)\b[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<!--[\s\S]*?-->/g, ' ')
     .replace(/<h[1-6][^>]*>/gi, '\n## ').replace(/<li[^>]*>/gi, '\n- ')
     .replace(/<\/(td|th)>/gi, ' | ').replace(/<(br|\/p|\/div|\/tr|\/h[1-6]|\/li|\/dt|\/dd|\/section)[^>]*>/gi, '\n')
@@ -258,7 +260,7 @@ function parsePage(html, url) {
   var seenVid = {};
   YT_ID.lastIndex = 0;
   while ((m = YT_ID.exec(html))) {
-    if (seenVid[m[1]]) continue;
+    if (seenVid[m[1]] || m[1] === 'videoseries') continue;   // embed/videoseries = a playlist, not a video
     seenVid[m[1]] = true;
     var around = html.slice(Math.max(0, m.index - 300), m.index + 300);
     var t = around.match(/title=["']([^"']{3,120})["']/i);

@@ -1,0 +1,213 @@
+// Failure modes and edge cases. Run: node tests/robustness.mjs
+import assert from "node:assert/strict";
+import { randomBytes } from "node:crypto";
+import { fakeClaude, hebrew, loadProject, researchJson, text } from "./harness.mjs";
+
+const results = [];
+function test(name, fn) {
+  try { fn(); results.push(["✓", name]); } catch (e) { results.push(["✗", name, e.message.split("\n").slice(0, 3).join(" ")]); }
+}
+
+const PAGE = (body) => ({ body: `<!doctype html><html><body>${body}</body></html>` });
+const PDF = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(3000, 48)]);
+const jpeg = (w, h) => Buffer.concat([
+  Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0, 1, 1, 0, 0, 1, 0, 1, 0, 0]),
+  Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, h >> 8, h & 255, w >> 8, w & 255, 3, 1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]), randomBytes(9000)]);
+const SITE = {
+  "maker.test/p/a100": PAGE(`<main><h1>A100</h1><p>${"Good product. ".repeat(40)}</p><img src="/i/a1.jpg"><img src="/i/a2.jpg"><img src="/i/a3.jpg">
+    <a href="/d/A100-brochure.pdf">Brochure</a></main>`),
+};
+const BIN = { "maker.test/i/a1.jpg": jpeg(1200, 900), "maker.test/i/a2.jpg": jpeg(1200, 900), "maker.test/i/a3.jpg": jpeg(1200, 900), "maker.test/d/A100-brochure.pdf": PDF };
+const OFFICIAL = { manufacturer: "Maker", model: "A100", official_domains: ["maker.test"], official_product_url: "https://maker.test/p/a100", official_downloads_url: "", site_is_manufacturer: true };
+const web = (claude, extra = {}) => (url, opts) => {
+  if (url.startsWith("https://api.test")) return claude.handle(url, opts);
+  const k = url.replace(/^https?:\/\//, "");
+  if (extra[k]) return extra[k];
+  if (SITE[k]) return SITE[k];
+  if (BIN[k]) return { body: BIN[k], type: k.endsWith(".pdf") ? "application/pdf" : "image/jpeg" };
+  return null;
+};
+const normal = (params) => (params.tools ? researchJson(OFFICIAL) : hebrew({ image_indexes: [0, 1, 2], brochure_index: 0 }));
+
+test("invalid API key: the row shows the error and the run stops (no endless trigger)", () => {
+  const claude = fakeClaude(normal, { key: "sk-right" });
+  const p = loadProject(web(claude), { apiKey: "sk-wrong" });
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle(10);
+  const [row] = p.rows();
+  assert.match(String(row[1]), /שגיאה/, "status: " + row[1]);
+  assert.match(String(row[5]), /401|invalid x-api-key/, "notes: " + row[5]);
+  assert.equal(p.g.triggers.length, 0, "trigger still running");
+});
+
+test("temporary API overload (529) when submitting: retried on the next run", () => {
+  const claude = fakeClaude(normal, { failCreate: (n) => (n === 1 ? { code: 529, body: { error: { message: "overloaded" } }, type: "application/json" } : null) });
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  assert.match(String(p.rows()[0][1]), /✓/, "status: " + p.rows()[0][1] + " " + p.rows()[0][5]);
+});
+
+test("research paused twice (pause_turn): continuation is a valid conversation", () => {
+  let pauses = 0;
+  const claude = fakeClaude((params) => {
+    if (!params.tools) return hebrew({ image_indexes: [0, 1, 2] });
+    const roles = params.messages.map((m) => m.role).join(",");
+    if (/assistant,assistant/.test(roles)) return { error: "messages: roles must alternate" };
+    if (pauses < 2) { pauses++; return { content: [{ type: "server_tool_use", id: "s" + pauses, name: "web_search", input: {} }], stop_reason: "pause_turn" }; }
+    return researchJson(OFFICIAL);
+  });
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  const [row] = p.rows();
+  assert.equal(row[3], "Maker", "manufacturer: " + row[3] + " / " + row[1] + " / " + row[5]);
+  const last = claude.requests.filter((r) => r.params.tools).pop();
+  assert.deepEqual(last.params.messages.map((m) => m.role), ["user", "assistant"]);
+  assert.equal(last.params.messages[1].content.length, 2, "both paused turns' content kept");
+});
+
+test("a brochure Claude can't read (errored request) doesn't fail the product: retried without it", () => {
+  const claude = fakeClaude((params) => {
+    if (params.tools) return researchJson(OFFICIAL);
+    return params.messages[0].content[0].type === "document" ? { error: "The PDF specified could not be processed" } : hebrew({ image_indexes: [0, 1, 2], brochure_index: 0 });
+  });
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  assert.match(String(p.rows()[0][1]), /✓/, "status: " + p.rows()[0][1] + " " + p.rows()[0][5]);
+});
+
+test("a product whose work data is gone (deleted/lost) doesn't keep the trigger running forever", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  for (const stage of ["new", "research_pending", "research_wait", "write_pending"]) {
+    p.ctx.setStages({ pGONE: stage });
+    p.run("ensureTrigger");
+    const ticks = p.runUntilIdle(10);
+    assert.ok(ticks < 10, "trigger never stopped for a lost product in stage " + stage);
+  }
+  p.run("ensureTrigger");
+  const ticks = p.runUntilIdle(10);
+  assert.ok(ticks < 10, "trigger never stopped");
+});
+
+test("a product waiting on a batch that was lost gets resubmitted", () => {
+  const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.run("tick");
+  p.g.scriptProps.setProperty("BATCHES", "[]"); // e.g. the run was killed after submitting
+  claude.batches.clear();
+  const before = claude.requests.length;
+  p.run("tick");
+  p.run("tick");
+  assert.ok(claude.requests.length > before, "not resubmitted");
+});
+
+test("menu 'run' returns quickly: it only queues (the minute trigger does the work)", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  const n = p.g.log.fetches.length;
+  p.run("startRun");
+  assert.equal(p.g.log.fetches.length, n, "startRun fetched pages itself (the user waits minutes on a spinner)");
+});
+
+test("waiting minutes/hours for Claude: an idle run doesn't read every product's state from Drive", () => {
+  const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
+  const p = loadProject(web(claude));
+  p.addLinks(Array.from({ length: 20 }, () => "https://maker.test/p/a100"));
+  p.run("startRun");
+  p.run("tick");
+  p.run("tick");
+  let reads = 0;
+  const root = p.g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
+  const state = root.getFoldersByName("_מצב_עבודה").next();
+  state.files.forEach((f) => { const orig = f.getBlob.bind(f); f.getBlob = () => { reads++; return orig(); }; });
+  p.run("tick");
+  assert.equal(reads, 0, `idle run read ${reads} state files`);
+});
+
+test("saving progress doesn't fill the Drive trash with old copies", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100", "https://maker.test/p/a100"]);
+  p.run("startRun");
+  for (let i = 0; i < 6; i++) p.run("tick");
+  const root = p.g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
+  const state = root.folders.find((f) => f.name === "_מצב_עבודה");
+  const trashed = state ? state.files.filter((f) => f.trashed).length : 0;
+  assert.equal(trashed, 0, `${trashed} trashed state files`);
+});
+
+test("a step that keeps getting cut off (6-minute limit) stops after 3 tries with a clear message", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  // Simulate: three earlier runs started the 'new' step and were killed before finishing.
+  const id = p.rows()[0][6];
+  const root = p.g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
+  const f = root.folders.find((x) => x.name === "_מצב_עבודה").files.find((x) => x.getName() === id + ".json" && !x.trashed);
+  const st = JSON.parse(f.getBlob().getDataAsString());
+  st.stepTries = { new: 3 };
+  f.blob.buf = Buffer.from(JSON.stringify(st));
+  p.run("tick");
+  const [row] = p.rows();
+  assert.match(String(row[1]), /שגיאה/, "status " + row[1]);
+  assert.match(String(row[5]), /נקטע|איטי/, "notes " + row[5]);
+});
+
+test("Hebrew-only product name and no manufacturer found: products don't overwrite each other's folder", () => {
+  const claude = fakeClaude((params) => (params.tools ? text("I could not find it.") : hebrew({ name: params.messages[0].content.at(-1).text.includes("b1") ? "מוצר ב" : "מוצר א" })));
+  const p = loadProject(web(claude, {
+    "shop.test/a1": PAGE("<h1>מכשיר מדידה</h1><p>" + "טקסט. ".repeat(50) + "</p>"),
+    "shop.test/b1": PAGE("<h1>מכשיר בדיקה</h1><p>" + "טקסט. ".repeat(50) + "</p>"),
+  }));
+  p.addLinks(["https://shop.test/a1", "https://shop.test/b1"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  const root = p.g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
+  const folders = root.folders.filter((f) => !f.trashed);
+  assert.equal(folders.length, 2, "folders: " + folders.map((f) => f.name).join(" | ") + " / " + p.rows().map((r) => r[1] + " " + r[5]).join(" | "));
+});
+
+test("page parsing: YouTube playlists aren't videos; ASP.NET pages (whole page in a <form>) still have text", () => {
+  const p = loadProject(() => null);
+  const page = p.ctx.parsePage(`<form id="form1"><h1>Model X</h1><p>${"Important specs here. ".repeat(10)}</p>
+    <iframe src="https://www.youtube.com/embed/videoseries?list=PL123"></iframe><iframe src="https://www.youtube.com/embed/AbCdEfGhIjK"></iframe></form>`, "https://x.test/p");
+  assert.equal(JSON.stringify(page.videos.map((v) => v.url)), JSON.stringify(["https://www.youtube.com/watch?v=AbCdEfGhIjK"]));
+  assert.match(page.text, /Important specs/);
+});
+
+test("links with spaces or Hebrew letters are downloaded (URL-encoded)", () => {
+  const seen = [];
+  const p = loadProject((url) => { seen.push(url); return { body: "ok" }; });
+  p.ctx.fetchUrl("https://x.test/files/User Manual.pdf");
+  p.ctx.fetchUrl("https://x.test/קטלוג/מוצר.pdf");
+  assert.deepEqual(seen, ["https://x.test/files/User%20Manual.pdf", "https://x.test/%D7%A7%D7%98%D7%9C%D7%95%D7%92/%D7%9E%D7%95%D7%A6%D7%A8.pdf"]);
+});
+
+test("many products at once (400 links): no crash on Google's 9KB-per-setting limit", () => {
+  const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
+  const p = loadProject(web(claude));
+  p.addLinks(Array.from({ length: 400 }, (_, i) => "https://maker.test/p/a100?n=" + i));
+  p.run("startRun");
+  assert.equal(p.rows().filter((r) => r[1] === "ממתין בתור").length, 400);
+  for (let i = 0; i < 12; i++) p.run("tick");
+  assert.ok(p.rows().every((r) => !/שגיאה/.test(r[1])), p.rows().find((r) => /שגיאה/.test(r[1]))?.[5]);
+});
+
+for (const r of results) console.log(r.join("  "));
+const failed = results.filter((r) => r[0] === "✗").length;
+console.log(`\n${results.length - failed}/${results.length} passed`);
+process.exit(failed ? 1 : 0);
