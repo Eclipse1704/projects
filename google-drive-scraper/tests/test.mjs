@@ -197,7 +197,9 @@ assert.ok(writes.find((w) => w.custom_id.endsWith("_write_1")).params.messages[0
 assert.ok(writes[0].params.system[0].text.includes("מצלמה תרמית מקצועית לאיתור נזילות"), "NDT24 style example in prompt");
 assert.ok(writes[0].params.system[0].text.includes("videoscope = וידאוסקופ"), "glossary in prompt");
 assert.equal(writes[0].params.output_config.format.type, "json_schema");
-assert.equal(writes[0].params.model, "claude-opus-5");
+assert.equal(writes[0].params.model, "claude-sonnet-5");
+assert.equal(writes[0].params.output_config.effort, "high");
+assert.ok(writes[0].params.system[0].text.includes("<avoid_words>\nהינו"), "avoid-words list in prompt");
 const x2000Write = writes.find((w) => w.params.messages[0].content.at(-1).text.includes("Model: X2000"));
 assert.equal(x2000Write.params.messages[0].content[0].type, "document", "official brochure given to Claude");
 assert.ok(!x2000Write.params.messages[0].content.at(-1).text.includes("dist.jpg"), "distributor images never offered");

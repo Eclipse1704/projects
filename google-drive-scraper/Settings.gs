@@ -12,7 +12,7 @@ var FULL_MAX_WORDS = 500;
 
 var DEFAULT_SETTINGS = [
   ['תיקייה בדרייב', 'NDT24 - מוצרים', 'שם התיקייה ב-Google Drive שאליה נשמרים המוצרים (תיקייה לכל מוצר)'],
-  ['מודל', 'claude-opus-5', 'מודל Claude'],
+  ['מודל', 'claude-sonnet-5', 'מודל Claude. claude-sonnet-5 = זול (ברירת מחדל). claude-opus-5 = חזק יותר, יקר פי 2.5'],
   ['שליחת מייל בסיום', 'כן', 'כן / לא'],
   ['דפי דוגמה לסגנון', [
     'https://www.ndt24.co.il/product/%D7%9E%D7%A6%D7%9C%D7%9E%D7%94-%D7%AA%D7%A8%D7%9E%D7%99%D7%AA-fotric-348a/',
@@ -37,6 +37,9 @@ var DEFAULT_SETTINGS = [
     'non-destructive testing (NDT) = בדיקות לא הורסות',
     'correlator = קורלטור',
   ].join('\n'), 'שורה לכל מונח: אנגלית = איך אומרים אצלנו. מוסיפים כאן כל מילה שיצאה לא טוב'],
+  ['מילים שלא משתמשים בהן', [
+    'הינו', 'הינה', 'הינם', 'הנו', 'מהפכני', 'מהפכנית', 'פורץ דרך', 'פתרון מושלם', 'יתר על כן', 'בנוסף לכך', 'באופן משמעותי', 'חווית משתמש',
+  ].join('\n'), 'מילה או ביטוי בכל שורה. אם Claude משתמש באחד מהם, הטקסט חוזר אליו לתיקון'],
 ];
 
 var SETTINGS_MEMO = null; // read once per run
@@ -57,6 +60,7 @@ function readSettings() {
     email: map['שליחת מייל בסיום'] !== 'לא',
     styleUrls: map['דפי דוגמה לסגנון'].split(/\s+/).filter(function (u) { return /^https?:\/\//.test(u); }),
     glossary: map['מילון מונחים'],
+    avoidWords: String(map['מילים שלא משתמשים בהן'] || '').split('\n').map(function (w) { return w.trim(); }).filter(String),
     // Stored for the whole spreadsheet, so the worker runs the same no matter which editor pressed 'run'.
     apiKey: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY') || PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
     apiBase: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',

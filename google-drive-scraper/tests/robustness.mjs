@@ -350,6 +350,26 @@ test("research jobs are split into batches of at most 20 products", () => {
   assert.ok(sizes.length >= 3 && sizes.every((n) => n <= 20), "batch sizes " + sizes);
 });
 
+test("Hebrew quality: a word from 'words we don't use' sends the text back to Claude for a rewrite", () => {
+  let writes = 0;
+  const claude = fakeClaude((params) => {
+    if (params.tools) return researchJson(OFFICIAL);
+    writes++;
+    return hebrew({ overview: writes === 1 ? "המכשיר הינו פתרון מושלם לאיתור נזילות." : "המכשיר מתאים לאיתור נזילות.", image_indexes: [0, 1, 2] });
+  });
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  assert.equal(writes, 2, "not retried");
+  const retry = claude.requests.filter((r) => r.params.system).pop();
+  assert.match(retry.params.messages[0].content.at(-1).text, /avoid_words>: הינו, פתרון מושלם/);
+  assert.doesNotMatch(String(p.rows()[0][5]), /avoid/);
+  // Hebrew word boundaries: "הינו" inside another word is fine
+  assert.equal(p.ctx.containsWord("בהינותו", "הינו"), false);
+  assert.equal(p.ctx.containsWord("המכשיר הינו טוב", "הינו"), true);
+});
+
 for (const r of results) console.log(r.join("  "));
 const failed = results.filter((r) => r[0] === "✗").length;
 console.log(`\n${results.length - failed}/${results.length} passed`);

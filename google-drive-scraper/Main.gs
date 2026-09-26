@@ -538,7 +538,7 @@ function styleExamples(settings) {
   var out = [];
   settings.styleUrls.forEach(function (u) {
     var page = fetchPage(u);
-    if (page) out.push({ url: u, text: page.text.slice(0, 3500) });
+    if (page) out.push({ url: u, text: page.text.slice(0, 5000) });
   });
   cache.put(key, JSON.stringify(out), 21600);
   return out;
@@ -669,7 +669,7 @@ function applyWrite(p, result) {
     if (p.writeAttempts < MAX_WRITE_ATTEMPTS) { p.stage = 'write_pending'; return; }
     throw new Error('Claude returned invalid JSON');
   }
-  var problems = validateContent(content);
+  var problems = validateContent(content, readSettings().avoidWords);
   if (problems.length && p.writeAttempts < MAX_WRITE_ATTEMPTS) {
     p.writeFeedback = '\n\nבטיוטה הקודמת היו הבעיות הבאות - תקן/י:\n- ' + problems.join('\n- ') + '\nהטיוטה הקודמת:\n' + JSON.stringify(content);
     p.stage = 'write_pending';
