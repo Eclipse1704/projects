@@ -31,7 +31,7 @@ var STATUS = {
 // Copying the script ("make a copy") also copies its saved properties.
 // A copy must not use the original's API key or work queue: start clean.
 function ensureOwnCopy() {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var id = ScriptApp.getScriptId();
   var owner = props.getProperty('SCRIPT_ID');
   if (owner === id) return;
@@ -41,7 +41,7 @@ function ensureOwnCopy() {
 
 // Queues links and starts the background worker. Returns how many were added.
 function queueLinks(links) {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   lock.waitLock(60000);   // the worker may be running right now
   try {
     var list = getItems();
@@ -62,7 +62,7 @@ function queueLinks(links) {
 }
 
 function stopRun() {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   lock.waitLock(60000);
   try {
     deleteTriggers();
@@ -83,13 +83,13 @@ function stopRun() {
 
 function deleteTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'tick') ScriptApp.deleteTrigger(t); });
-  PropertiesService.getScriptProperties().deleteProperty('TRIGGER_EVERY');
+  PropertiesService.getUserProperties().deleteProperty('TRIGGER_EVERY');
 }
 
 // Every minute while there is work to do here; every 5 minutes while only waiting for Claude
 // (saves the daily trigger-time quota).
 function setTriggerEvery(minutes) {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; });
   if (has && props.getProperty('TRIGGER_EVERY') === String(minutes)) return;
   deleteTriggers();
@@ -101,20 +101,20 @@ function ensureTrigger() { setTriggerEvery(1); }
 
 // ---------------- State ----------------
 
-// Where each active product is ({id: stage}), kept in Script Properties so a run can see what needs
+// Where each active product is ({id: stage}), kept in User Properties so a run can see what needs
 // work without opening every product's state file.
 function getStages() { return JSON.parse(getBig('STAGES') || '{}'); }
 function setStages(m) { setBig('STAGES', JSON.stringify(m)); }
 function getBatches() { return JSON.parse(getBig('BATCHES') || '[]'); }
 function setBatches(b) { setBig('BATCHES', JSON.stringify(b)); }
 
-// Script Properties hold at most 9KB per value: long values are split into numbered parts.
+// User Properties hold at most 9KB per value: long values are split into numbered parts.
 var PART_CHARS = 2500;   // Hebrew/UTF-8 safe: 2500 chars <= 9KB
 // The parts this execution last read or wrote, so unchanged parts aren't written again
-// (Script Properties have a daily read/write quota). Every writer holds the script lock.
+// (Properties have a daily read/write quota). Every writer holds the user's lock.
 var BIG_SEEN = {};
 function getBig(key) {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var n = parseInt(props.getProperty(key + '_parts') || '0', 10);
   var parts = [];
   for (var i = 0; i < n; i++) parts.push(props.getProperty(key + '_' + i) || '');
@@ -122,7 +122,7 @@ function getBig(key) {
   return parts.join('');
 }
 function setBig(key, value) {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var seen = BIG_SEEN[key];
   var old = seen ? seen.length : parseInt(props.getProperty(key + '_parts') || '0', 10);
   var parts = [];
@@ -152,7 +152,7 @@ function saveState(p, stages) {
 }
 
 // The list the app shows: one entry per link ever queued (newest last). Kept in memory during a run
-// and written once at the end (Script Properties have a daily write quota).
+// and written once at the end (User Properties have a daily write quota).
 var MAX_ITEMS = 200;
 var ITEMS_MEMO = null;
 var ITEMS_DIRTY = false;
@@ -190,10 +190,10 @@ var DEADLINE = 0;
 function timeLeft() { return DEADLINE - Date.now(); }
 
 function tick() {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   if (!lock.tryLock(1000)) return;
   DEADLINE = Date.now() + TICK_BUDGET_MS;
-  PropertiesService.getScriptProperties().setProperty('LAST_RUN', new Date().toISOString());
+  PropertiesService.getUserProperties().setProperty('LAST_RUN', new Date().toISOString());
   try {
     work();
   } catch (e) {
@@ -206,7 +206,7 @@ function tick() {
 // A background run that crashes would otherwise fail silently: show it on the products and in the app.
 function reportCrash(e) {
   var msg = String(e && e.message || e);
-  PropertiesService.getScriptProperties().setProperty('LAST_ERROR', new Date().toISOString() + ' ' + msg);
+  PropertiesService.getUserProperties().setProperty('LAST_ERROR', new Date().toISOString() + ' ' + msg);
   try {
     Object.keys(getStages()).forEach(function (id) { setRowStatus(id, STATUS.queued, { notes: 'תקלה בהרצה ברקע (מנסה שוב כל דקה): ' + msg }); });
   } catch (e2) {}
@@ -214,7 +214,7 @@ function reportCrash(e) {
 
 // For the app: is the background worker running, when did it last run, what went wrong.
 function workerStatus() {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var lastError = props.getProperty('LAST_ERROR') || '';
   return {
     running: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; }),

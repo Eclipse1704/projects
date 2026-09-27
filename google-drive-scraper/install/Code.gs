@@ -2,7 +2,7 @@
 // מדביקים את כל הקובץ הזה ב-Code.gs בעורך של Apps Script. הוראות: README.md
 
 // ======================================== Settings.gs ========================================
-// Default settings. They can be changed in the app's settings screen (saved in Script Properties).
+// Default settings. They can be changed in the app's settings screen (saved in User Properties).
 
 var SHORT_MAX_WORDS = 80;
 var FULL_MAX_WORDS = 500;
@@ -53,9 +53,9 @@ function readSettings() {
     styleUrls: map['דפי דוגמה לסגנון'].split(/\s+/).filter(function (u) { return /^https?:\/\//.test(u); }),
     glossary: map['מילון מונחים'],
     avoidWords: String(map['מילים שלא משתמשים בהן'] || '').split('\n').map(function (w) { return w.trim(); }).filter(String),
-    // Stored for the whole script, so the background worker uses the same key.
-    apiKey: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY') || PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
-    apiBase: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
+    // Everything is kept per Google user: each person who opens the app has their own key, list and Drive folders.
+    apiKey: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
+    apiBase: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
   };
   return SETTINGS_MEMO;
 }
@@ -859,7 +859,7 @@ var STATUS = {
 // Copying the script ("make a copy") also copies its saved properties.
 // A copy must not use the original's API key or work queue: start clean.
 function ensureOwnCopy() {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var id = ScriptApp.getScriptId();
   var owner = props.getProperty('SCRIPT_ID');
   if (owner === id) return;
@@ -869,7 +869,7 @@ function ensureOwnCopy() {
 
 // Queues links and starts the background worker. Returns how many were added.
 function queueLinks(links) {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   lock.waitLock(60000);   // the worker may be running right now
   try {
     var list = getItems();
@@ -890,7 +890,7 @@ function queueLinks(links) {
 }
 
 function stopRun() {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   lock.waitLock(60000);
   try {
     deleteTriggers();
@@ -911,13 +911,13 @@ function stopRun() {
 
 function deleteTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) { if (t.getHandlerFunction() === 'tick') ScriptApp.deleteTrigger(t); });
-  PropertiesService.getScriptProperties().deleteProperty('TRIGGER_EVERY');
+  PropertiesService.getUserProperties().deleteProperty('TRIGGER_EVERY');
 }
 
 // Every minute while there is work to do here; every 5 minutes while only waiting for Claude
 // (saves the daily trigger-time quota).
 function setTriggerEvery(minutes) {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; });
   if (has && props.getProperty('TRIGGER_EVERY') === String(minutes)) return;
   deleteTriggers();
@@ -929,20 +929,20 @@ function ensureTrigger() { setTriggerEvery(1); }
 
 // ---------------- State ----------------
 
-// Where each active product is ({id: stage}), kept in Script Properties so a run can see what needs
+// Where each active product is ({id: stage}), kept in User Properties so a run can see what needs
 // work without opening every product's state file.
 function getStages() { return JSON.parse(getBig('STAGES') || '{}'); }
 function setStages(m) { setBig('STAGES', JSON.stringify(m)); }
 function getBatches() { return JSON.parse(getBig('BATCHES') || '[]'); }
 function setBatches(b) { setBig('BATCHES', JSON.stringify(b)); }
 
-// Script Properties hold at most 9KB per value: long values are split into numbered parts.
+// User Properties hold at most 9KB per value: long values are split into numbered parts.
 var PART_CHARS = 2500;   // Hebrew/UTF-8 safe: 2500 chars <= 9KB
 // The parts this execution last read or wrote, so unchanged parts aren't written again
-// (Script Properties have a daily read/write quota). Every writer holds the script lock.
+// (Properties have a daily read/write quota). Every writer holds the user's lock.
 var BIG_SEEN = {};
 function getBig(key) {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var n = parseInt(props.getProperty(key + '_parts') || '0', 10);
   var parts = [];
   for (var i = 0; i < n; i++) parts.push(props.getProperty(key + '_' + i) || '');
@@ -950,7 +950,7 @@ function getBig(key) {
   return parts.join('');
 }
 function setBig(key, value) {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var seen = BIG_SEEN[key];
   var old = seen ? seen.length : parseInt(props.getProperty(key + '_parts') || '0', 10);
   var parts = [];
@@ -980,7 +980,7 @@ function saveState(p, stages) {
 }
 
 // The list the app shows: one entry per link ever queued (newest last). Kept in memory during a run
-// and written once at the end (Script Properties have a daily write quota).
+// and written once at the end (User Properties have a daily write quota).
 var MAX_ITEMS = 200;
 var ITEMS_MEMO = null;
 var ITEMS_DIRTY = false;
@@ -1018,10 +1018,10 @@ var DEADLINE = 0;
 function timeLeft() { return DEADLINE - Date.now(); }
 
 function tick() {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   if (!lock.tryLock(1000)) return;
   DEADLINE = Date.now() + TICK_BUDGET_MS;
-  PropertiesService.getScriptProperties().setProperty('LAST_RUN', new Date().toISOString());
+  PropertiesService.getUserProperties().setProperty('LAST_RUN', new Date().toISOString());
   try {
     work();
   } catch (e) {
@@ -1034,7 +1034,7 @@ function tick() {
 // A background run that crashes would otherwise fail silently: show it on the products and in the app.
 function reportCrash(e) {
   var msg = String(e && e.message || e);
-  PropertiesService.getScriptProperties().setProperty('LAST_ERROR', new Date().toISOString() + ' ' + msg);
+  PropertiesService.getUserProperties().setProperty('LAST_ERROR', new Date().toISOString() + ' ' + msg);
   try {
     Object.keys(getStages()).forEach(function (id) { setRowStatus(id, STATUS.queued, { notes: 'תקלה בהרצה ברקע (מנסה שוב כל דקה): ' + msg }); });
   } catch (e2) {}
@@ -1042,7 +1042,7 @@ function reportCrash(e) {
 
 // For the app: is the background worker running, when did it last run, what went wrong.
 function workerStatus() {
-  var props = PropertiesService.getScriptProperties();
+  var props = PropertiesService.getUserProperties();
   var lastError = props.getProperty('LAST_ERROR') || '';
   return {
     running: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; }),
@@ -1636,7 +1636,9 @@ function finishIfDone(settings) {
 
 // ======================================== App.gs ========================================
 // The app: a web page (Deploy -> Web app) where you paste links, press start, watch progress, open folders
-// and change the settings. No spreadsheet needed; everything is saved in the script and in Google Drive.
+// and change the settings. No spreadsheet needed.
+// Deployed as "Execute as: User accessing the web app", one link serves everyone: each person who opens it
+// works in their own Google account (own API key, list, settings, Drive folders, background runs).
 
 function doGet() {
   ensureOwnCopy();
@@ -1680,7 +1682,7 @@ function appStart(text) {
     .map(function (l) { return l.replace(/[),.;:!?]+$/, ''); })
     .filter(function (l) { if (seen[l]) return false; seen[l] = true; return true; });
   if (!links.length) return { ok: false, message: 'לא מצאתי קישורים. מדביקים קישורים שמתחילים ב-https://' };
-  PropertiesService.getScriptProperties().deleteProperty('LAST_ERROR');
+  PropertiesService.getUserProperties().deleteProperty('LAST_ERROR');
   var added = queueLinks(links);
   return { ok: true, message: added === 1 ? 'מוצר אחד התחיל. אפשר לסגור את הדף - העבודה ממשיכה ברקע.' : added + ' מוצרים התחילו. אפשר לסגור את הדף - העבודה ממשיכה ברקע.' };
 }
@@ -1694,7 +1696,7 @@ function appSaveKey(key) {
     var r = UrlFetchApp.fetch(settings.apiBase + '/v1/models', { muteHttpExceptions: true, headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } });
     if (r.getResponseCode() === 401 || r.getResponseCode() === 403) return { ok: false, message: 'המפתח לא תקין. מעתיקים אותו שוב מ-console.anthropic.com' };
   } catch (e) {}
-  PropertiesService.getScriptProperties().setProperty('ANTHROPIC_API_KEY', key);
+  PropertiesService.getUserProperties().setProperty('ANTHROPIC_API_KEY', key);
   SETTINGS_MEMO = null;
   return { ok: true, message: 'המפתח נשמר ✓' };
 }
@@ -1706,7 +1708,7 @@ function appStop() {
 
 // Removes finished products from the list (their Drive folders stay).
 function appClearFinished() {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   lock.waitLock(60000);
   try {
     var active = getStages();

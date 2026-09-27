@@ -11,7 +11,7 @@
     "https://www.googleapis.com/auth/documents"
   ],
   "webapp": {
-    "executeAs": "USER_DEPLOYING",
-    "access": "MYSELF"
+    "executeAs": "USER_ACCESSING",
+    "access": "ANYONE"
   }
 }

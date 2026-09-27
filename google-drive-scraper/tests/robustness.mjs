@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
-import { FAST, fakeClaude, hebrew, loadProject, researchJson, text } from "./harness.mjs";
+import { FAST, fakeClaude, hebrew, loadProject, researchJson, setSetting, text } from "./harness.mjs";
 
 const results = [];
 // Tests of the batch-job path: in the FAST run they force batch mode.
@@ -108,7 +108,7 @@ test("a product waiting on a batch that was lost gets resubmitted", () => {
   p.addLinks(["https://maker.test/p/a100"]);
   p.start();
   p.run("tick");
-  p.g.scriptProps.setProperty("BATCHES", "[]"); // e.g. the run was killed after submitting
+  p.g.userProps.setProperty("BATCHES", "[]"); // e.g. the run was killed after submitting
   claude.batches.clear();
   const before = claude.requests.length;
   p.run("tick");
@@ -382,13 +382,32 @@ test("'make a copy' of the script: the copy doesn't get the original's API key o
   p.addLinks(["https://maker.test/p/a100"]);
   p.start();
   p.run("tick");
-  assert.ok(p.g.scriptProps.getProperty("ANTHROPIC_API_KEY"));
+  assert.ok(p.g.userProps.getProperty("ANTHROPIC_API_KEY"));
   p.g.sheetId.value = "script-2";   // the copy has a different id; Google copies the script and its properties
   p.run("doGet");
-  assert.equal(p.g.scriptProps.getProperty("ANTHROPIC_API_KEY"), null, "API key copied to the copy");
+  assert.equal(p.g.userProps.getProperty("ANTHROPIC_API_KEY"), null, "API key copied to the copy");
   assert.equal(p.ctx.getBatches().length, 0);
   assert.equal(Object.keys(p.ctx.getStages()).length, 0);
   assert.equal(p.run("appState").items.length, 0, "the original's product list copied");
+});
+
+test("one shared link, many people: each Google user has their own key, list and settings", () => {
+  const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
+  const p = loadProject(web(claude), batchOnly);
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  setSetting(p, "מודל", "claude-opus-5");
+  const mine = p.ctx.PropertiesService;
+  const other = new Map();
+  const store = { getProperty: (k) => (other.has(k) ? other.get(k) : null), setProperty: (k, v) => { other.set(k, String(v)); return store; },
+    deleteProperty: (k) => { other.delete(k); return store; }, deleteAllProperties: () => { other.clear(); return store; }, getProperties: () => Object.fromEntries(other) };
+  p.ctx.PropertiesService = { ...mine, getUserProperties: () => store };   // dad opens the same link
+  const st = p.run("appState");
+  assert.equal(st.hasKey, false, "dad got my API key");
+  assert.equal(st.items.length, 0, "dad sees my products");
+  assert.equal(p.run("appGetSettings").values["מודל"], "claude-sonnet-5");
+  p.ctx.PropertiesService = mine;
+  assert.equal(p.run("appState").items.length, 1);
 });
 
 test("install: the web app opens (title, phone-friendly), with no spreadsheet at all", () => {
@@ -470,7 +489,7 @@ test("app: start without an API key asks for the key; text without links explain
   const p = loadProject(() => null, { apiKey: "" });
   const r = p.run("appStart", "https://maker.test/p/a100");
   assert.equal(r.needKey, true);
-  p.g.scriptProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
+  p.g.userProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
   const r2 = p.run("appStart", "בלי קישורים בכלל");
   assert.equal(r2.ok, false);
   assert.match(r2.message, /לא מצאתי קישורים/);
@@ -516,12 +535,12 @@ test("app: the list is capped (oldest finished products dropped), and updates do
   assert.equal(items.length, 200);
   assert.equal(items[0].id, "x60");
   let writes = 0;
-  const set = p.g.scriptProps.setProperty.bind(p.g.scriptProps);
-  p.g.scriptProps.setProperty = (k, v) => { writes++; return set(k, v); };
+  const set = p.g.userProps.setProperty.bind(p.g.userProps);
+  p.g.userProps.setProperty = (k, v) => { writes++; return set(k, v); };
   p.run("getItems");
   p.ctx.setRowStatus("x259", "✗ שגיאה", { notes: "x" });
   p.ctx.flushItems();
-  p.g.scriptProps.setProperty = set;
+  p.g.userProps.setProperty = set;
   assert.ok(writes <= 3, "writes for one changed product: " + writes);
   assert.equal(p.run("getItems").at(-1).status, "✗ שגיאה");
 });

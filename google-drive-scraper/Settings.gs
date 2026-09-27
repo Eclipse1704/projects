@@ -1,4 +1,4 @@
-// Default settings. They can be changed in the app's settings screen (saved in Script Properties).
+// Default settings. They can be changed in the app's settings screen (saved in User Properties).
 
 var SHORT_MAX_WORDS = 80;
 var FULL_MAX_WORDS = 500;
@@ -49,9 +49,9 @@ function readSettings() {
     styleUrls: map['דפי דוגמה לסגנון'].split(/\s+/).filter(function (u) { return /^https?:\/\//.test(u); }),
     glossary: map['מילון מונחים'],
     avoidWords: String(map['מילים שלא משתמשים בהן'] || '').split('\n').map(function (w) { return w.trim(); }).filter(String),
-    // Stored for the whole script, so the background worker uses the same key.
-    apiKey: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY') || PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
-    apiBase: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
+    // Everything is kept per Google user: each person who opens the app has their own key, list and Drive folders.
+    apiKey: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
+    apiBase: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
   };
   return SETTINGS_MEMO;
 }

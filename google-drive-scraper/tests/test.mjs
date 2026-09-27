@@ -145,8 +145,8 @@ vm.runInContext(code, ctx);
 ctx.doGet();
 // FAST=1: direct calls (the default setting); otherwise batch jobs.
 const FAST = process.env.FAST === "1";
-g.scriptProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
-g.scriptProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
+g.userProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
+g.userProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
 ctx.appSaveSettings({ ...ctx.appGetSettings().values, "מצב מהיר": FAST ? "כן" : "לא" });
 const reset = () => vm.runInContext("SETTINGS_MEMO = null; FOLDER_MEMO = {}; ITEMS_MEMO = null; ITEMS_DIRTY = false; BIG_SEEN = {};", ctx);
 reset();

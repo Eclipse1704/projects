@@ -26,8 +26,8 @@ export function loadProject(fetchHandler, { apiKey = "sk-test", fast = FAST } = 
   const fresh = () => vm.runInContext("SETTINGS_MEMO = null; FOLDER_MEMO = {}; ITEMS_MEMO = null; ITEMS_DIRTY = false; BIG_SEEN = {};", ctx);
   const run = (fn, ...args) => { fresh(); return ctx[fn](...args); };
   run("doGet");
-  if (apiKey) g.scriptProps.setProperty("ANTHROPIC_API_KEY", apiKey);
-  g.scriptProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
+  if (apiKey) g.userProps.setProperty("ANTHROPIC_API_KEY", apiKey);
+  g.userProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
   const p = {
     g, ctx, run,
     // Links pasted in the app, not started yet: "start" sends them (like pressing התחל).
@@ -37,7 +37,7 @@ export function loadProject(fetchHandler, { apiKey = "sk-test", fast = FAST } = 
     items() { return run("getItems"); },
     // [link, status, name, manufacturer, folderUrl, notes, id] per product, oldest first.
     rows() { return p.items().map((it) => [it.link, it.status, it.name, it.manufacturer, it.folderUrl, it.notes, it.id]); },
-    active() { return JSON.parse(g.scriptProps.getProperty("ACTIVE") || "[]"); },
+    active() { return JSON.parse(g.userProps.getProperty("ACTIVE") || "[]"); },
     runUntilIdle(max = 40) { let i = 0; for (; i < max && g.triggers.some((t) => t.getHandlerFunction() === "tick"); i++) run("tick"); return i; },
   };
   setSetting(p, "מצב מהיר", fast ? "כן" : "לא");

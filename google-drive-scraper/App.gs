@@ -1,5 +1,7 @@
 // The app: a web page (Deploy -> Web app) where you paste links, press start, watch progress, open folders
-// and change the settings. No spreadsheet needed; everything is saved in the script and in Google Drive.
+// and change the settings. No spreadsheet needed.
+// Deployed as "Execute as: User accessing the web app", one link serves everyone: each person who opens it
+// works in their own Google account (own API key, list, settings, Drive folders, background runs).
 
 function doGet() {
   ensureOwnCopy();
@@ -43,7 +45,7 @@ function appStart(text) {
     .map(function (l) { return l.replace(/[),.;:!?]+$/, ''); })
     .filter(function (l) { if (seen[l]) return false; seen[l] = true; return true; });
   if (!links.length) return { ok: false, message: 'לא מצאתי קישורים. מדביקים קישורים שמתחילים ב-https://' };
-  PropertiesService.getScriptProperties().deleteProperty('LAST_ERROR');
+  PropertiesService.getUserProperties().deleteProperty('LAST_ERROR');
   var added = queueLinks(links);
   return { ok: true, message: added === 1 ? 'מוצר אחד התחיל. אפשר לסגור את הדף - העבודה ממשיכה ברקע.' : added + ' מוצרים התחילו. אפשר לסגור את הדף - העבודה ממשיכה ברקע.' };
 }
@@ -57,7 +59,7 @@ function appSaveKey(key) {
     var r = UrlFetchApp.fetch(settings.apiBase + '/v1/models', { muteHttpExceptions: true, headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } });
     if (r.getResponseCode() === 401 || r.getResponseCode() === 403) return { ok: false, message: 'המפתח לא תקין. מעתיקים אותו שוב מ-console.anthropic.com' };
   } catch (e) {}
-  PropertiesService.getScriptProperties().setProperty('ANTHROPIC_API_KEY', key);
+  PropertiesService.getUserProperties().setProperty('ANTHROPIC_API_KEY', key);
   SETTINGS_MEMO = null;
   return { ok: true, message: 'המפתח נשמר ✓' };
 }
@@ -69,7 +71,7 @@ function appStop() {
 
 // Removes finished products from the list (their Drive folders stay).
 function appClearFinished() {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   lock.waitLock(60000);
   try {
     var active = getStages();
