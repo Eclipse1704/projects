@@ -41,7 +41,7 @@ test("invalid API key: the row shows the error and the run stops (no endless tri
   const [row] = p.rows();
   assert.match(String(row[1]), /שגיאה/, "status: " + row[1]);
   assert.match(String(row[5]), /401|invalid x-api-key/, "notes: " + row[5]);
-  assert.equal(p.g.triggers.length, 0, "trigger still running");
+  assert.equal(p.g.triggers.filter((t) => t.getHandlerFunction() === "tick").length, 0, "trigger still running");
 });
 
 test("temporary API overload (529) when submitting: retried on the next run", () => {
@@ -394,7 +394,7 @@ test("fresh install: opening the sheet creates the products, settings and instru
   p.g.sheets.clear();
   p.run("onOpen");
   assert.deepEqual([...p.g.sheets.keys()].sort(), ["הגדרות", "הוראות", "מוצרים"].sort());
-  assert.match(String(p.g.sheets.get("הוראות").get(2, 1)), /מדביקים קישורים/);
+  assert.match(String(p.g.sheets.get("הוראות").get(2, 1)), /פתח את הסורק/);
 });
 
 test("no advanced services needed (install = paste one file); the readable Google Doc is built with DocumentApp", () => {
@@ -429,6 +429,56 @@ test("a background run that crashes shows the error on the rows and in 'מצב �
   assert.match(status, /עבודה ברקע: פעילה/);
   assert.match(status, /מפתח API: מוגדר/);
   assert.match(status, /Access denied: DriveApp/);
+});
+
+// ---------- the scraper window ----------
+
+test("window: API key is checked and saved from the window", () => {
+  const claude = fakeClaude(normal, { key: "sk-ant-good" });
+  const p = loadProject(web(claude), { apiKey: "" });
+  assert.equal(p.run("sidebarState").hasKey, false);
+  assert.equal(p.run("sidebarSaveKey", "hello").ok, false);
+  const bad = p.run("sidebarSaveKey", "sk-ant-wrong");
+  assert.equal(bad.ok, false, "wrong key accepted");
+  assert.match(bad.message, /לא תקין/);
+  assert.equal(p.run("sidebarSaveKey", "  sk-ant-good  ").ok, true);
+  assert.equal(p.run("sidebarState").hasKey, true);
+});
+
+test("window: paste messy text with links, press start, watch progress, get the folder link", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  const started = p.run("sidebarStart", "תבדוק את זה: https://maker.test/p/a100, וגם את\nhttps://maker.test/p/a100?n=2.\nhttps://maker.test/p/a100");
+  assert.equal(started.ok, true, started.message);
+  assert.match(started.message, /2 מוצרים התחילו/);
+  assert.equal(p.rows().length, 2);
+  let st = p.run("sidebarState");
+  assert.equal(st.items.length, 2);
+  assert.ok(st.items.every((i) => i.state === "working" && i.step === "ממתין להתחלה"));
+  p.runUntilIdle();
+  st = p.run("sidebarState");
+  assert.ok(st.items.every((i) => (i.state === "done" || i.state === "warn") && i.pct === 100), JSON.stringify(st.items));
+  assert.ok(st.items.every((i) => i.folderUrl.startsWith("https://drive.google.com/")), "no folder link");
+  assert.ok(st.items.every((i) => i.name && i.manufacturer === "Maker"));
+});
+
+test("window: start without an API key asks for the key; text without links explains", () => {
+  const p = loadProject(() => null, { apiKey: "" });
+  const r = p.run("sidebarStart", "https://maker.test/p/a100");
+  assert.equal(r.needKey, true);
+  p.g.scriptProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
+  const r2 = p.run("sidebarStart", "בלי קישורים בכלל");
+  assert.equal(r2.ok, false);
+  assert.match(r2.message, /לא מצאתי קישורים/);
+});
+
+test("window: opens from the menu, and after that opens by itself (one trigger, not one per open)", () => {
+  const p = loadProject(() => null);
+  p.run("openScraper");
+  p.run("openScraper");
+  assert.equal(p.g.ui.sidebars.length, 2);
+  assert.equal(p.g.ui.sidebars[0].title, "סורק מוצרים");
+  assert.equal(p.g.triggers.filter((t) => t.getHandlerFunction() === "autoOpenScraper").length, 1);
 });
 
 // ---------- fast mode (direct calls) ----------

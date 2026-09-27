@@ -31,7 +31,9 @@ var STATUS = {
 function onOpen() {
   try { ensureOwnCopy(); setup(); } catch (e) {}   // first open after install / copy: create the sheets
   SpreadsheetApp.getUi().createMenu('סורק מוצרים')
-    .addItem('▶ הרץ על הקישורים', 'startRun')
+    .addItem('▶ פתח את הסורק', 'openScraper')
+    .addSeparator()
+    .addItem('הרץ על הקישורים בגיליון', 'startRun')
     .addItem('הגדרת מפתח API של Claude', 'setApiKey')
     .addItem('מצב המערכת', 'showStatus')
     .addSeparator()
@@ -52,11 +54,11 @@ function ensureOwnCopy() {
 
 var HELP = [
   ['איך משתמשים'],
-  ['1. בגיליון "מוצרים", בעמודה "קישור למוצר", מדביקים קישורים למוצרים - קישור בכל שורה, מכל אתר.'],
-  ['2. בתפריט למעלה: סורק מוצרים ← ▶ הרץ על הקישורים.'],
-  ['   בפעם הראשונה: מדביקים מפתח API של Claude (מ-console.anthropic.com) ומאשרים הרשאות של Google:'],
-  ['   Continue ← בוחרים חשבון ← Advanced ← Go to … (unsafe) ← Allow. זה מופיע כי הסקריפט שלכם ולא של Google.'],
-  ['3. אפשר לסגור את הגיליון. תוך כמה דקות הסטטוס מתחלף ל-✓, מופיע קישור לתיקייה בדרייב ונשלח מייל.'],
+  ['1. בתפריט למעלה: סורק מוצרים ← ▶ פתח את הסורק. נפתח חלון בצד (מהפעם השנייה הוא נפתח לבד).'],
+  ['2. בפעם הראשונה: Google מבקשת אישור - Continue ← בוחרים חשבון ← Advanced ← Go to … (unsafe) ← Allow.'],
+  ['   ואז מדביקים בחלון את מפתח ה-API של Claude (מ-console.anthropic.com).'],
+  ['3. מדביקים בחלון קישורים למוצרים ולוחצים "התחל". בחלון רואים את ההתקדמות של כל מוצר.'],
+  ['4. כשמוצר מוכן לוחצים "פתח תיקייה". אפשר גם לסגור הכל - העבודה ממשיכה ברקע ונשלח מייל בסיום.'],
   [''],
   ['בכל מוצר בתיקייה: דף HTML בעברית, מסמך לקריאה, תיקיית תמונות, ברושור ומדריך למשתמש (מאתר היצרן הרשמי).'],
   ['מילה שיצאה לא טוב בעברית? מוסיפים אותה בגיליון "הגדרות" (מילון מונחים / מילים שלא משתמשים בהן).'],
@@ -110,24 +112,32 @@ function setApiKey() {
 function startRun() {
   ensureOwnCopy();
   setup();
-  var settings = readSettings();
-  if (!settings.apiKey) {
+  if (!readSettings().apiKey) {
     setApiKey();
-    settings = readSettings();
-    if (!settings.apiKey) return;
+    SETTINGS_MEMO = null;
+    if (!readSettings().apiKey) return;
   }
+  var added = queueSheetRows();
+  if (added === null) {
+    SpreadsheetApp.getUi().alert('הדביקו קישורים למוצרים בעמודה "קישור למוצר" (קישור בכל שורה) ואז הריצו שוב.');
+  } else if (!added) {
+    SpreadsheetApp.getUi().alert('אין קישורים חדשים להרצה. (שורות שכבר הושלמו לא רצות שוב; כדי להריץ שוב מוחקים את הסטטוס.)');
+  } else {
+    SpreadsheetApp.getActive().toast(added + ' מוצרים נכנסו לתור. העבודה מתחילה תוך דקה וממשיכה ברקע - אפשר לסגור את הגיליון.', 'סורק מוצרים', 10);
+  }
+}
+
+// Puts every sheet row with a link and no status (or 'stopped' / error) in the queue and starts the
+// background worker. Returns how many were added, or null when the sheet has no rows at all.
+function queueSheetRows() {
   var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
   var n = sheet.getLastRow() - 1;
-  if (n < 1) {
-    SpreadsheetApp.getUi().alert('הדביקו קישורים למוצרים בעמודה "קישור למוצר" (קישור בכל שורה) ואז הריצו שוב.');
-    return;
-  }
+  if (n < 1) return null;
   var lock = LockService.getScriptLock();
   lock.waitLock(60000);   // the worker may be running right now
   var added = 0;
   try {
-    var range = sheet.getRange(2, 1, n, HEADERS.length);
-    var rows = range.getValues();
+    var rows = sheet.getRange(2, 1, n, HEADERS.length).getValues();
     var stages = getStages();
     var stamp = Date.now().toString(36);
     rows.forEach(function (r, i) {
@@ -149,12 +159,8 @@ function startRun() {
   } finally {
     lock.releaseLock();
   }
-  if (!added) {
-    SpreadsheetApp.getUi().alert('אין קישורים חדשים להרצה. (שורות שכבר הושלמו לא רצות שוב; כדי להריץ שוב מוחקים את הסטטוס.)');
-    return;
-  }
-  setTriggerEvery(1);
-  SpreadsheetApp.getActive().toast(added + ' מוצרים נכנסו לתור. העבודה מתחילה תוך דקה וממשיכה ברקע - אפשר לסגור את הגיליון.', 'סורק מוצרים', 10);
+  if (added) setTriggerEvery(1);
+  return added;
 }
 
 function stopRun() {

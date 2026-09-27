@@ -33,7 +33,7 @@ export function loadProject(fetchHandler, { apiKey = "sk-test", fast = FAST } = 
     addLinks(links) { const start = Math.max(2, sheet.getLastRow() + 1); links.forEach((l, i) => sheet.set(start + i, 1, l)); },
     rows() { return sheet.getRange(2, 1, sheet.getLastRow() - 1, 7).getValues(); },
     active() { return JSON.parse(g.scriptProps.getProperty("ACTIVE") || "[]"); },
-    runUntilIdle(max = 40) { let i = 0; for (; i < max && g.triggers.length; i++) run("tick"); return i; },
+    runUntilIdle(max = 40) { let i = 0; for (; i < max && g.triggers.some((t) => t.getHandlerFunction() === "tick"); i++) run("tick"); return i; },
   };
 }
 
@@ -66,6 +66,7 @@ export function fakeClaude(answer, { key = "sk-test", pollsUntilEnded = 1, failC
       body.requests.forEach((r) => requests.push(r));
       return { body: { id, processing_status: "in_progress" }, type: "application/json" };
     }
+    if (u.pathname === "/v1/models") return { body: { data: [] }, type: "application/json" };
     const m = u.pathname.match(/^\/v1\/messages\/batches\/(\w+)$/);
     if (m) {
       const b = batches.get(m[1]);

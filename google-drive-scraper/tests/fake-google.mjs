@@ -59,6 +59,7 @@ class Range {
   }
   setValues(v) { v.forEach((row, i) => row.forEach((x, j) => this.sheet.set(this.r + i, this.c + j, x))); return this; }
   setValue(x) { this.sheet.set(this.r, this.c, x); return this; }
+  getFormulas() { return this.getValues().map((row) => row.map((v) => (String(v).startsWith("=") ? v : ""))); }
   setFormula(x) { this.sheet.set(this.r, this.c, x); return this; }
   setFontWeight() { return this; }
   setWrap() { return this; }
@@ -71,6 +72,7 @@ class Sheet {
   set(r, c, v) { (this.cells[r - 1] ||= [])[c - 1] = v; }
   getLastRow() { return this.cells.reduce((n, row, i) => (row && row.some((x) => x !== "" && x !== undefined) ? i + 1 : n), 0); }
   getRange(r, c, nr, nc) { return new Range(this, r, c, nr, nc); }
+  getName() { return this.name; }
   setFrozenRows() {} setRightToLeft() {} setColumnWidth() {} hideColumns() {}
 }
 
@@ -83,6 +85,7 @@ export function makeGoogle({ fetchHandler }) {
     getUrl: () => "https://docs.google.com/spreadsheets/d/test",
     getId: () => sheetId.value,
     toast: () => {},
+    setActiveSheet: (sh) => { ui.activeSheet = sh && sh.name; return sh; },
   };
   const props = () => {
     const m = new Map();
@@ -103,6 +106,7 @@ export function makeGoogle({ fetchHandler }) {
   const cache = new Map();
   const log = { fetches: [], fetchAlls: [] };
   const alerts = [];
+  const ui = { sidebars: [], activeSheet: null };
 
   const response = (code, body, headers = {}) => {
     const buf = Buffer.isBuffer(body) ? body : Buffer.from(typeof body === "string" ? body : JSON.stringify(body ?? ""), "utf8");
@@ -121,6 +125,7 @@ export function makeGoogle({ fetchHandler }) {
       getUi: () => ({
         createMenu: () => { const m = { addItem: () => m, addSeparator: () => m, addToUi: () => {} }; return m; },
         alert: (a, b) => alerts.push(b === undefined ? a : a + "\n" + b),
+        showSidebar: (h) => ui.sidebars.push(h),
         prompt: () => ({ getSelectedButton: () => "CANCEL", getResponseText: () => "" }),
         ButtonSet: { OK_CANCEL: 1 },
         Button: { OK: "OK" },
@@ -199,13 +204,17 @@ export function makeGoogle({ fetchHandler }) {
     CacheService: { getScriptCache: () => ({ get: (k) => cache.get(k) ?? null, put: (k, v) => cache.set(k, v) }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, waitLock: () => {}, releaseLock: () => {} }) },
     ScriptApp: {
-      newTrigger: (fn) => ({ timeBased: () => ({ everyMinutes: (n) => ({ create: () => { const t = { getHandlerFunction: () => fn, minutes: n }; triggers.push(t); return t; } }) }) }),
+      newTrigger: (fn) => ({
+        timeBased: () => ({ everyMinutes: (n) => ({ create: () => { const t = { getHandlerFunction: () => fn, minutes: n }; triggers.push(t); return t; } }) }),
+        forSpreadsheet: () => ({ onOpen: () => ({ create: () => { const t = { getHandlerFunction: () => fn, onOpen: true }; triggers.push(t); return t; } }) }),
+      }),
       getProjectTriggers: () => [...triggers],
       deleteTrigger: (t) => { const i = triggers.indexOf(t); if (i >= 0) triggers.splice(i, 1); },
     },
+    HtmlService: { createHtmlOutput: (html) => { const o = { html, title: "", setTitle: (t) => { o.title = t; return o; } }; return o; } },
     MailApp: { sendEmail: (to, subject, body) => mails.push({ to, subject, body }) },
     Session: { getEffectiveUser: () => ({ getEmail: () => "dad@example.com" }), getScriptTimeZone: () => "Asia/Jerusalem" },
     console: { log() {}, warn() {}, error: console.error },
   };
-  return { google, sheets, sheetId, myDrive, userProps, scriptProps, triggers, mails, log, alerts };
+  return { google, sheets, sheetId, myDrive, userProps, scriptProps, triggers, mails, log, alerts, ui };
 }

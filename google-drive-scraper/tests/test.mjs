@@ -154,7 +154,7 @@ const products = g.sheets.get("מוצרים");
   .forEach((link, i) => products.set(i + 2, 1, link));
 
 ctx.startRun();
-for (let i = 0; i < 40 && g.triggers.length; i++) ctx.tick();
+for (let i = 0; i < 40 && g.triggers.some((t) => t.getHandlerFunction() === "tick"); i++) ctx.tick();
 
 // ---- checks ----
 const rows = products.getRange(2, 1, 3, 7).getValues();
