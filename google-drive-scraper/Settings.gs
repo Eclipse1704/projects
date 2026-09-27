@@ -5,6 +5,10 @@ var FULL_MAX_WORDS = 500;
 
 var DEFAULT_SETTINGS = [
   ['אתר', 'https://www.ndt24.co.il', 'כתובת האתר שלכם. המערכת קוראת ממנו את רשימת קטגוריות המוצרים'],
+  ['להעלות לאתר', 'כן', 'כן = כל מוצר נכנס לאתר כטיוטה (אחרי שמחברים את האתר). לא = רק לדרייב'],
+  ['שדה קטלוג pdf', '', 'השם הפנימי של השדה "קטלוג pdf" באתר (מתמלא לבד כשמחברים את האתר)'],
+  ['שדה ספר הוראות', '', 'השם הפנימי של השדה "ספר הוראות" באתר'],
+  ['שדה וידאו מוצר', '', 'השם הפנימי של השדה "וידאו מוצר" באתר'],
   ['תיקייה בדרייב', 'NDT24 - מוצרים', 'שם התיקייה ב-Google Drive שאליה נשמרים המוצרים (תיקייה לכל מוצר)'],
   ['מודל', 'claude-sonnet-5', 'מודל Claude. claude-sonnet-5 = זול (ברירת מחדל). claude-opus-5 = חזק יותר, יקר פי 2.5'],
   ['מצב מהיר', 'כן', 'כן = כל מוצר מוכן תוך דקות (כ-0.4$ למוצר). לא = עבודת רקע, יכול לקחת עד שעה, חצי מחיר (כ-0.2$ למוצר)'],
@@ -42,8 +46,14 @@ var SETTINGS_MEMO = null; // read once per run
 function readSettings() {
   if (SETTINGS_MEMO) return SETTINGS_MEMO;
   var map = settingsMap();
+  var publish = map['להעלות לאתר'] !== 'לא';
   SETTINGS_MEMO = {
     site: /^https?:\/\//.test(map['אתר']) ? map['אתר'] : '',
+    siteUser: PropertiesService.getUserProperties().getProperty('SITE_USER') || '',
+    sitePass: PropertiesService.getUserProperties().getProperty('SITE_PASS') || '',
+    fieldCatalog: map['שדה קטלוג pdf'] || '',
+    fieldManual: map['שדה ספר הוראות'] || '',
+    fieldVideo: map['שדה וידאו מוצר'] || '',
     rootFolder: map['תיקייה בדרייב'],
     model: map['מודל'],
     email: map['שליחת מייל בסיום'] !== 'לא',
@@ -55,6 +65,7 @@ function readSettings() {
     apiKey: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
     apiBase: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
   };
+  SETTINGS_MEMO.publish = publish && !!(SETTINGS_MEMO.site && SETTINGS_MEMO.siteUser && SETTINGS_MEMO.sitePass);
   return SETTINGS_MEMO;
 }
 

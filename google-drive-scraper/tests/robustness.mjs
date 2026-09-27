@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
-import { FAST, fakeClaude, hebrew, loadProject, researchJson, setSetting, text } from "./harness.mjs";
+import { FAST, fakeClaude, fakeWp, hebrew, loadProject, researchJson, setSetting, text } from "./harness.mjs";
 
 const results = [];
 // Tests of the batch-job path: in the FAST run they force batch mode.
@@ -639,6 +639,131 @@ test("app: cost of the run and of each product; buttons for the run folder and t
   st2 = p.run("appState");
   assert.equal(st2.runFolder.name, "סריקה 2");
   assert.ok(Math.abs(+st2.runCost - +st.items[0].cost) < 0.011);
+});
+
+// ---------- feeding the site ----------
+
+const EXISTING = [{ id: 7, slug: "old", status: "publish", meta_data: [
+  { key: "_edit_lock", value: "1" }, { key: "catalog_pdf", value: "https://shop.test/wp-content/uploads/x.pdf" },
+  { key: "user_manual", value: "https://shop.test/wp-content/uploads/m.pdf" }, { key: "product_video", value: "https://www.youtube.com/watch?v=abc" }] }];
+const onSite = (claude, site) => (url, opts) => site.handle(url, opts) || web(claude)(url, opts);
+const connect = (p, pass = "abcd efgh ijkl") => { setSetting(p, "אתר", "https://shop.test"); return p.run("appConnectSite", "borism", pass); };
+const siteProduct = (params) => (params.tools ? researchJson(OFFICIAL) : hebrew({
+  image_indexes: [0, 1, 2], brochure_index: 0, category: "וידאוסקופים", tags: ["וידאוסקופ", "בדיקה חזותית"], slug: "maker-a100",
+  description_paragraphs: ["פסקה ראשונה.", "פסקה שנייה."], usage: ["שימוש"], focus_keyphrase: "וידאוסקופ A100", seo_title: "וידאוסקופ A100", meta_description: "תיאור מטא של A100.",
+}));
+
+test("site: connecting checks the password and finds the catalog / manual / video fields by itself", () => {
+  const claude = fakeClaude(normal);
+  const site = fakeWp({ existing: EXISTING });
+  const p = loadProject(onSite(claude, site));
+  const bad = connect(p, "wrong");
+  assert.equal(bad.ok, false);
+  assert.match(bad.message, /לא נכונים/);
+  const ok = connect(p);
+  assert.equal(ok.ok, true, ok.message);
+  const v = ok.settings.values;
+  assert.equal(v["שדה קטלוג pdf"], "catalog_pdf");
+  assert.equal(v["שדה ספר הוראות"], "user_manual");
+  assert.equal(v["שדה וידאו מוצר"], "product_video");
+  assert.equal(ok.settings.siteConnected, true);
+  assert.equal(p.run("appState").publishing, true);
+});
+
+test("site: a finished product is created on the site as a draft with all its fields and images", () => {
+  const claude = fakeClaude(siteProduct);
+  const site = fakeWp({ existing: EXISTING });
+  const p = loadProject(onSite(claude, site));
+  connect(p);
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.runUntilIdle();
+  const prod = site.products.find((x) => x.id !== 7);
+  assert.ok(prod, "no product on the site; notes: " + p.rows()[0][5]);
+  assert.equal(prod.status, "draft");
+  assert.equal(prod.name, "מוצר לדוגמה");
+  assert.equal(prod.slug, "maker-a100");
+  assert.equal(prod.description, "<p>פסקה ראשונה.</p>\n<p>פסקה שנייה.</p>\n<ul>\n<li>שימוש</li>\n</ul>");
+  assert.equal(prod.short_description, "<p>תיאור קצר של המוצר.</p>");
+  assert.deepEqual(prod.categories, [{ id: 16 }]);
+  assert.deepEqual(prod.tags.map((t) => site.tags.find((x) => x.id === t.id).name), ["וידאוסקופ", "בדיקה חזותית"]);
+  assert.equal(site.brands[0].name, "Maker");
+  assert.deepEqual(prod.brands, [{ id: site.brands[0].id }]);
+  // images: uploaded under their MAKER-A100-00X names, in order; the first is the main product image
+  const names = prod.images.map((im) => site.media.find((m) => m.id === im.id).filename);
+  assert.deepEqual(names, ["MAKER-A100-001.jpg", "MAKER-A100-002.jpg", "MAKER-A100-003.jpg"]);
+  assert.equal(site.media.find((m) => m.filename === "MAKER-A100-001.jpg").alt_text, "מוצר לדוגמה");
+  const meta = Object.fromEntries(prod.meta_data.map((m) => [m.key, m.value]));
+  assert.equal(meta._yoast_wpseo_focuskw, "וידאוסקופ A100");
+  assert.equal(meta._yoast_wpseo_title, "וידאוסקופ A100");
+  assert.equal(meta._yoast_wpseo_metadesc, "תיאור מטא של A100.");
+  assert.equal(meta.catalog_pdf, "https://shop.test/wp-content/uploads/MAKER-A100-BROCHURE.pdf", "catalog PDF not uploaded to the site");
+  assert.ok(site.media.some((m) => m.filename === "MAKER-A100-BROCHURE.pdf"));
+  // in the app: done, with a button to the draft
+  const it = p.run("appState").items[0];
+  assert.equal(it.state === "done" || it.state === "warn", true, it.step + " " + it.notes);
+  assert.equal(it.siteUrl, "https://shop.test/wp-admin/post.php?post=" + prod.id + "&action=edit");
+});
+
+test("site: a text fix updates the same product (no duplicate, images not uploaded again); rescanning the link too", () => {
+  const claude = fakeClaude((params) => {
+    if (params.tools) return researchJson(OFFICIAL);
+    const fixed = params.messages[0].content.at(-1).text.includes("<requested_changes>");
+    return JSON.parse(JSON.stringify(siteProduct(params)).replace("מוצר לדוגמה", fixed ? "מוצר מתוקן" : "מוצר לדוגמה"));
+  });
+  const site = fakeWp();
+  const p = loadProject(onSite(claude, site));
+  connect(p);
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.runUntilIdle();
+  const uploads = site.media.length;
+  const item = p.run("appState").items[0];
+  assert.equal(p.run("appRevise", item.id, "לשנות את השם").ok, true);
+  p.runUntilIdle();
+  assert.equal(site.products.length, 1, "fix created another product");
+  assert.equal(site.products[0].name, "מוצר מתוקן");
+  assert.equal(site.media.length, uploads, "files uploaded again");
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.runUntilIdle();
+  assert.equal(site.products.length, 1, "rescan created another product (same slug)");
+});
+
+test("site: problems on the site don't lose the product (Drive is ready, the note says what to do)", () => {
+  const claude = fakeClaude(siteProduct);
+  const site = fakeWp({ brands: false });
+  const p = loadProject(onSite(claude, site));
+  connect(p);
+  // no brands on this site: the product is created, the brand is left for a manual pick
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.runUntilIdle();
+  assert.equal(site.products.length, 1);
+  assert.match(String(p.rows()[0][5]), /לבחור מותג ידנית/);
+  // the password was revoked on the site: the product still finishes, with a note
+  p.g.userProps.setProperty("SITE_PASS", "revoked");
+  p.addLinks(["https://maker.test/p/a100?n=2"]);
+  p.start();
+  p.runUntilIdle();
+  const row = p.rows()[1];
+  assert.match(String(row[1]), /✓/);
+  assert.match(String(row[5]), /לא עלה לאתר.*בודקים את החיבור/);
+  assert.ok(String(row[4]).startsWith("https://drive.google.com/"));
+});
+
+test("site: not connected (or switched off): products only go to Drive, like before", () => {
+  const claude = fakeClaude(siteProduct);
+  const site = fakeWp();
+  const p = loadProject(onSite(claude, site));
+  connect(p);
+  setSetting(p, "להעלות לאתר", "לא");
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.runUntilIdle();
+  assert.equal(site.products.length, 0);
+  assert.equal(p.run("appState").items[0].siteUrl, "");
+  assert.match(String(p.rows()[0][1]), /✓/);
 });
 
 // ---------- fast mode (direct calls) ----------

@@ -20,6 +20,7 @@ var STATUS = {
   official: 'קורא את אתר היצרן…',
   write: 'Claude כותב בעברית…',
   save: 'שומר בדרייב…',
+  publish: 'מעלה לאתר…',
   done: '✓ הושלם',
   doneNotes: '✓ הושלם, עם הערות',
   error: '✗ שגיאה',
@@ -181,7 +182,7 @@ function setRowStatus(id, status, extra) {
   if (!it) return;
   it.status = status;
   extra = extra || {};
-  ['name', 'manufacturer', 'folderUrl', 'notes', 'cost', 'dataId'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
+  ['name', 'manufacturer', 'folderUrl', 'notes', 'cost', 'dataId', 'siteUrl'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
   ITEMS_DIRTY = true;
 }
 
@@ -242,6 +243,8 @@ function work() {
       if (ITEMS_DIRTY) flushItems();
       moved = runLocalStage(settings, 'save') || moved;
       if (ITEMS_DIRTY) flushItems();
+      moved = runLocalStage(settings, 'publish') || moved;
+      if (ITEMS_DIRTY) flushItems();
       if (!moved) break;
     }
     submitBatches(settings, 'research');
@@ -254,7 +257,7 @@ function work() {
 }
 
 // Runs one local stage for all products in it: their pages/files are downloaded in parallel first.
-var LOCAL_GROUP = { new: 10, official: 5, save: 3 };
+var LOCAL_GROUP = { new: 10, official: 5, save: 3, publish: 2 };
 
 function runLocalStage(settings, stage) {
   var stages = getStages();
@@ -390,6 +393,7 @@ function runLocalStep(settings, p) {
     if (p.stage === 'new') stepSupplier(p);
     else if (p.stage === 'official') stepOfficial(p);
     else if (p.stage === 'save') stepSave(settings, p);
+    else if (p.stage === 'publish') stepPublish(settings, p);
   } catch (e) {
     fail(p, e);
     return;
@@ -534,14 +538,25 @@ function stepSave(settings, p) {
   folder.setName(stem + ' - ' + c.name);
   PropertiesService.getUserProperties().setProperty('RUN_FOLDER', JSON.stringify({ name: root.getName(), url: root.getUrl(), tableUrl: table.getUrl() }));
 
-  p.stage = 'done';
   p.folderUrl = folder.getUrl();
   p.folderId = folder.getId();
   p.revision = null;
+  p.publishTries = 0;
+  if (settings.publish) {
+    p.stage = 'publish';
+    setRowStatus(p.id, STATUS.publish, { name: c.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl });
+    return;
+  }
+  finishProduct(p);
+}
+
+// Done: keep what a later text fix needs, and show the product as ready.
+function finishProduct(p) {
+  p.stage = 'done';
   var dataId = saveProductData(p);
   setRowStatus(p.id, p.warnings.length ? STATUS.doneNotes : STATUS.done, {
-    name: c.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl, notes: p.warnings.join(' · '),
-    cost: (p.cost || 0).toFixed(2), dataId: dataId,
+    name: p.content.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl, notes: p.warnings.join(' · '),
+    cost: (p.cost || 0).toFixed(2), dataId: dataId, siteUrl: p.siteUrl || '',
   });
 }
 
@@ -750,24 +765,34 @@ function styleExamples(settings) {
 
 // The product categories that exist on the site (WooCommerce's public Store API), so Claude picks one of them.
 var CATEGORIES_MEMO = null;
-function siteCategories(settings) {
+function siteCategoryList(settings) {
   if (CATEGORIES_MEMO) return CATEGORIES_MEMO;
   CATEGORIES_MEMO = [];
   if (!settings.site) return CATEGORIES_MEMO;
   var cache = CacheService.getScriptCache();
-  var key = 'cats_' + Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, settings.site));
+  var key = 'cats2_' + Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, settings.site));
   var hit = cache.get(key);
   if (hit) return (CATEGORIES_MEMO = JSON.parse(hit));
   try {
     var r = UrlFetchApp.fetch(settings.site.replace(/\/+$/, '') + '/wp-json/wc/store/v1/products/categories?per_page=100', { muteHttpExceptions: true });
     if (r.getResponseCode() === 200) {
-      CATEGORIES_MEMO = JSON.parse(r.getContentText()).map(function (x) { return decodeEntities(String(x.name || '')).trim(); }).filter(String);
+      CATEGORIES_MEMO = JSON.parse(r.getContentText()).map(function (x) { return { id: x.id, name: decodeEntities(String(x.name || '')).trim() }; })
+        .filter(function (x) { return x.name; });
       cache.put(key, JSON.stringify(CATEGORIES_MEMO), 21600);
     }
   } catch (e) {
     console.warn('categories not read: ' + e.message);
   }
   return CATEGORIES_MEMO;
+}
+
+function siteCategories(settings) {
+  return siteCategoryList(settings).map(function (x) { return x.name; });
+}
+
+function siteCategoryId(settings, name) {
+  var hit = siteCategoryList(settings).filter(function (x) { return x.name === name; })[0];
+  return hit ? hit.id : null;
 }
 
 var MAX_POLL_FAILURES = 10;

@@ -9,6 +9,10 @@ var FULL_MAX_WORDS = 500;
 
 var DEFAULT_SETTINGS = [
   ['אתר', 'https://www.ndt24.co.il', 'כתובת האתר שלכם. המערכת קוראת ממנו את רשימת קטגוריות המוצרים'],
+  ['להעלות לאתר', 'כן', 'כן = כל מוצר נכנס לאתר כטיוטה (אחרי שמחברים את האתר). לא = רק לדרייב'],
+  ['שדה קטלוג pdf', '', 'השם הפנימי של השדה "קטלוג pdf" באתר (מתמלא לבד כשמחברים את האתר)'],
+  ['שדה ספר הוראות', '', 'השם הפנימי של השדה "ספר הוראות" באתר'],
+  ['שדה וידאו מוצר', '', 'השם הפנימי של השדה "וידאו מוצר" באתר'],
   ['תיקייה בדרייב', 'NDT24 - מוצרים', 'שם התיקייה ב-Google Drive שאליה נשמרים המוצרים (תיקייה לכל מוצר)'],
   ['מודל', 'claude-sonnet-5', 'מודל Claude. claude-sonnet-5 = זול (ברירת מחדל). claude-opus-5 = חזק יותר, יקר פי 2.5'],
   ['מצב מהיר', 'כן', 'כן = כל מוצר מוכן תוך דקות (כ-0.4$ למוצר). לא = עבודת רקע, יכול לקחת עד שעה, חצי מחיר (כ-0.2$ למוצר)'],
@@ -46,8 +50,14 @@ var SETTINGS_MEMO = null; // read once per run
 function readSettings() {
   if (SETTINGS_MEMO) return SETTINGS_MEMO;
   var map = settingsMap();
+  var publish = map['להעלות לאתר'] !== 'לא';
   SETTINGS_MEMO = {
     site: /^https?:\/\//.test(map['אתר']) ? map['אתר'] : '',
+    siteUser: PropertiesService.getUserProperties().getProperty('SITE_USER') || '',
+    sitePass: PropertiesService.getUserProperties().getProperty('SITE_PASS') || '',
+    fieldCatalog: map['שדה קטלוג pdf'] || '',
+    fieldManual: map['שדה ספר הוראות'] || '',
+    fieldVideo: map['שדה וידאו מוצר'] || '',
     rootFolder: map['תיקייה בדרייב'],
     model: map['מודל'],
     email: map['שליחת מייל בסיום'] !== 'לא',
@@ -59,6 +69,7 @@ function readSettings() {
     apiKey: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
     apiBase: PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
   };
+  SETTINGS_MEMO.publish = publish && !!(SETTINGS_MEMO.site && SETTINGS_MEMO.siteUser && SETTINGS_MEMO.sitePass);
   return SETTINGS_MEMO;
 }
 
@@ -933,6 +944,7 @@ var STATUS = {
   official: 'קורא את אתר היצרן…',
   write: 'Claude כותב בעברית…',
   save: 'שומר בדרייב…',
+  publish: 'מעלה לאתר…',
   done: '✓ הושלם',
   doneNotes: '✓ הושלם, עם הערות',
   error: '✗ שגיאה',
@@ -1094,7 +1106,7 @@ function setRowStatus(id, status, extra) {
   if (!it) return;
   it.status = status;
   extra = extra || {};
-  ['name', 'manufacturer', 'folderUrl', 'notes', 'cost', 'dataId'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
+  ['name', 'manufacturer', 'folderUrl', 'notes', 'cost', 'dataId', 'siteUrl'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
   ITEMS_DIRTY = true;
 }
 
@@ -1155,6 +1167,8 @@ function work() {
       if (ITEMS_DIRTY) flushItems();
       moved = runLocalStage(settings, 'save') || moved;
       if (ITEMS_DIRTY) flushItems();
+      moved = runLocalStage(settings, 'publish') || moved;
+      if (ITEMS_DIRTY) flushItems();
       if (!moved) break;
     }
     submitBatches(settings, 'research');
@@ -1167,7 +1181,7 @@ function work() {
 }
 
 // Runs one local stage for all products in it: their pages/files are downloaded in parallel first.
-var LOCAL_GROUP = { new: 10, official: 5, save: 3 };
+var LOCAL_GROUP = { new: 10, official: 5, save: 3, publish: 2 };
 
 function runLocalStage(settings, stage) {
   var stages = getStages();
@@ -1303,6 +1317,7 @@ function runLocalStep(settings, p) {
     if (p.stage === 'new') stepSupplier(p);
     else if (p.stage === 'official') stepOfficial(p);
     else if (p.stage === 'save') stepSave(settings, p);
+    else if (p.stage === 'publish') stepPublish(settings, p);
   } catch (e) {
     fail(p, e);
     return;
@@ -1447,14 +1462,25 @@ function stepSave(settings, p) {
   folder.setName(stem + ' - ' + c.name);
   PropertiesService.getUserProperties().setProperty('RUN_FOLDER', JSON.stringify({ name: root.getName(), url: root.getUrl(), tableUrl: table.getUrl() }));
 
-  p.stage = 'done';
   p.folderUrl = folder.getUrl();
   p.folderId = folder.getId();
   p.revision = null;
+  p.publishTries = 0;
+  if (settings.publish) {
+    p.stage = 'publish';
+    setRowStatus(p.id, STATUS.publish, { name: c.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl });
+    return;
+  }
+  finishProduct(p);
+}
+
+// Done: keep what a later text fix needs, and show the product as ready.
+function finishProduct(p) {
+  p.stage = 'done';
   var dataId = saveProductData(p);
   setRowStatus(p.id, p.warnings.length ? STATUS.doneNotes : STATUS.done, {
-    name: c.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl, notes: p.warnings.join(' · '),
-    cost: (p.cost || 0).toFixed(2), dataId: dataId,
+    name: p.content.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl, notes: p.warnings.join(' · '),
+    cost: (p.cost || 0).toFixed(2), dataId: dataId, siteUrl: p.siteUrl || '',
   });
 }
 
@@ -1663,24 +1689,34 @@ function styleExamples(settings) {
 
 // The product categories that exist on the site (WooCommerce's public Store API), so Claude picks one of them.
 var CATEGORIES_MEMO = null;
-function siteCategories(settings) {
+function siteCategoryList(settings) {
   if (CATEGORIES_MEMO) return CATEGORIES_MEMO;
   CATEGORIES_MEMO = [];
   if (!settings.site) return CATEGORIES_MEMO;
   var cache = CacheService.getScriptCache();
-  var key = 'cats_' + Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, settings.site));
+  var key = 'cats2_' + Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, settings.site));
   var hit = cache.get(key);
   if (hit) return (CATEGORIES_MEMO = JSON.parse(hit));
   try {
     var r = UrlFetchApp.fetch(settings.site.replace(/\/+$/, '') + '/wp-json/wc/store/v1/products/categories?per_page=100', { muteHttpExceptions: true });
     if (r.getResponseCode() === 200) {
-      CATEGORIES_MEMO = JSON.parse(r.getContentText()).map(function (x) { return decodeEntities(String(x.name || '')).trim(); }).filter(String);
+      CATEGORIES_MEMO = JSON.parse(r.getContentText()).map(function (x) { return { id: x.id, name: decodeEntities(String(x.name || '')).trim() }; })
+        .filter(function (x) { return x.name; });
       cache.put(key, JSON.stringify(CATEGORIES_MEMO), 21600);
     }
   } catch (e) {
     console.warn('categories not read: ' + e.message);
   }
   return CATEGORIES_MEMO;
+}
+
+function siteCategories(settings) {
+  return siteCategoryList(settings).map(function (x) { return x.name; });
+}
+
+function siteCategoryId(settings, name) {
+  var hit = siteCategoryList(settings).filter(function (x) { return x.name === name; })[0];
+  return hit ? hit.id : null;
 }
 
 var MAX_POLL_FAILURES = 10;
@@ -1841,6 +1877,231 @@ function finishIfDone(settings) {
   }
 }
 
+// ======================================== Site.gs ========================================
+// Feeding the site: each finished product is created on the WooCommerce site as a DRAFT with all its fields
+// (texts, images, category, tags, brand, Yoast SEO, catalog / manual / video fields), ready for a final look
+// and "פרסום". Signs in with a WordPress application password (Users → Profile → Application Passwords).
+
+var SITE_TIMEOUT_TRIES = 3;
+
+function siteAuthHeader(settings) {
+  return 'Basic ' + Utilities.base64Encode(settings.siteUser + ':' + settings.sitePass);
+}
+
+// A request to the site's REST API (/wp-json/...). Returns the parsed JSON; throws an Error with .status on failure.
+function siteRequest(settings, method, path, body, extra) {
+  var opts = {
+    method: method, muteHttpExceptions: true, followRedirects: true,
+    headers: { Authorization: siteAuthHeader(settings), 'User-Agent': UA },
+  };
+  if (body !== undefined && body !== null) { opts.contentType = 'application/json'; opts.payload = JSON.stringify(body); }
+  for (var k in (extra || {})) {
+    if (k === 'headers') { for (var h in extra.headers) opts.headers[h] = extra.headers[h]; } else opts[k] = extra[k];
+  }
+  var r = UrlFetchApp.fetch(settings.site.replace(/\/+$/, '') + '/wp-json' + path, opts);
+  var code = r.getResponseCode();
+  var text = r.getContentText();
+  var json = null;
+  try { json = JSON.parse(text); } catch (e) {}
+  if (code >= 400 || json === null) {
+    var err = new Error('האתר ' + code + ': ' + ((json && json.message) || String(text).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 150)));
+    err.status = code;
+    err.code = json && json.code;
+    throw err;
+  }
+  return json;
+}
+
+// Uploads a file to the site's media library. Returns {id, url}.
+function siteUpload(settings, blob, filename, alt) {
+  var media = siteRequest(settings, 'post', '/wp/v2/media', null, {
+    contentType: blob.getContentType() || 'application/octet-stream',
+    payload: blob.getBytes(),
+    headers: { 'Content-Disposition': 'attachment; filename="' + filename + '"' },
+  });
+  if (alt) {
+    try { siteRequest(settings, 'post', '/wp/v2/media/' + media.id, { alt_text: alt, title: alt }); } catch (e) {}
+  }
+  return { id: media.id, url: media.source_url };
+}
+
+// A tag or brand by name: the existing one, or a new one.
+function siteTerm(settings, base, name) {
+  name = String(name || '').trim();
+  if (!name) return null;
+  var found = siteRequest(settings, 'get', base + '?per_page=100&search=' + encodeURIComponent(name));
+  var same = (found || []).filter(function (t) { return decodeEntities(String(t.name)).trim().toLowerCase() === name.toLowerCase(); })[0];
+  if (same) return same.id;
+  try {
+    return siteRequest(settings, 'post', base, { name: name }).id;
+  } catch (e) {
+    if (e.code === 'term_exists' || e.status === 400) {   // created in the meantime, or a name that differs only in case
+      var again = siteRequest(settings, 'get', base + '?per_page=100&search=' + encodeURIComponent(name));
+      if (again && again[0]) return again[0].id;
+    }
+    throw e;
+  }
+}
+
+// The product that was created for this product before (a fix, or the same link scanned again).
+function siteExisting(settings, p, slug) {
+  if (p.wcId) {
+    try {
+      var own = siteRequest(settings, 'get', '/wc/v3/products/' + p.wcId);
+      if (own && own.status !== 'trash') return own;
+    } catch (e) {
+      if (e.status !== 404) throw e;
+    }
+  }
+  if (!slug) return null;
+  var list = siteRequest(settings, 'get', '/wc/v3/products?status=any&slug=' + encodeURIComponent(slug));
+  return (list || []).filter(function (x) { return x.status !== 'trash'; })[0] || null;
+}
+
+function stepPublish(settings, p) {
+  p.publishTries = (p.publishTries || 0) + 1;
+  try {
+    publishProduct(settings, p);
+  } catch (e) {
+    // Busy / down / timeout: try again on the next run. Anything else (wrong password, blocked): the Drive folder is ready anyway.
+    if ((!e.status || e.status >= 500 || e.status === 429) && p.publishTries < SITE_TIMEOUT_TRIES) throw e;
+    p.warnings.push('לא עלה לאתר: ' + String(e.message || e) + (e.status === 401 || e.status === 403 ? ' (בודקים את החיבור לאתר בהגדרות)' : ''));
+  }
+  finishProduct(p);
+}
+
+function publishProduct(settings, p) {
+  var c = p.content;
+  var folder = DriveApp.getFolderById(p.folderId);
+  var imagesDir = firstLive(folder.getFoldersByName(IMAGES_FOLDER));
+  p.wcMedia = p.wcMedia || {};   // "file name|size" -> {id, url}: a fix doesn't upload the same files again
+
+  var upload = function (file, alt) {
+    var blob = file.getBlob();
+    var key = file.getName() + '|' + blob.getBytes().length;
+    if (!p.wcMedia[key]) p.wcMedia[key] = siteUpload(settings, blob, file.getName(), alt);
+    return p.wcMedia[key];
+  };
+
+  var images = [];
+  p.saved.images.forEach(function (im, n) {
+    var file = imagesDir && firstLive(imagesDir.getFilesByName(im.file.split('/').pop()));
+    if (file) images.push({ id: upload(file, c.name + (n ? ' - ' + (n + 1) : '')).id });
+  });
+  var docUrl = {};
+  p.saved.docs.forEach(function (d) {
+    var file = firstLive(folder.getFilesByName(d.file));
+    docUrl[d.kind] = file ? upload(file, '').url : d.url;
+  });
+
+  var meta = [
+    { key: '_yoast_wpseo_focuskw', value: c.focus_keyphrase || '' },
+    { key: '_yoast_wpseo_title', value: c.seo_title || '' },
+    { key: '_yoast_wpseo_metadesc', value: c.meta_description || '' },
+  ];
+  var video = (p.saved.videos[0] || {}).url || '';
+  [[settings.fieldCatalog, docUrl.brochure || ''], [settings.fieldManual, docUrl.manual || ''], [settings.fieldVideo, video]].forEach(function (f) {
+    if (f[0]) meta.push({ key: f[0], value: f[1] });
+  });
+
+  var body = {
+    name: c.name,
+    slug: c.slug || undefined,
+    type: 'simple',
+    description: siteDescriptionHtml(c),
+    short_description: '<p>' + esc(c.short_description) + '</p>',
+    images: images,
+    meta_data: meta,
+  };
+  var catId = siteCategoryId(settings, c.category);
+  if (catId) body.categories = [{ id: catId }];
+  var tagIds = [];
+  (c.tags || []).forEach(function (t) {
+    try { var id = siteTerm(settings, '/wc/v3/products/tags', t); if (id) tagIds.push({ id: id }); } catch (e) { if (e.status === 401 || e.status === 403) throw e; }
+  });
+  body.tags = tagIds;
+  var brandOk = false;
+  try {
+    var brandId = siteTerm(settings, '/wc/v3/products/brands', p.research.manufacturer);
+    if (brandId) { body.brands = [{ id: brandId }]; brandOk = true; }
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) throw e;
+  }
+
+  var existing = siteExisting(settings, p, c.slug);
+  var product;
+  if (existing) {
+    product = siteRequest(settings, 'put', '/wc/v3/products/' + existing.id, body);
+  } else {
+    body.status = 'draft';
+    product = siteRequest(settings, 'post', '/wc/v3/products', body);
+  }
+  if (brandOk && !(product.brands && product.brands.length)) brandOk = false;
+  if (p.research.manufacturer && !brandOk) p.warnings.push('באתר: לבחור מותג ידנית (' + p.research.manufacturer + ')');
+  if (c.category && !catId) p.warnings.push('באתר: לבחור קטגוריה ידנית');
+  if (!settings.fieldCatalog || !settings.fieldManual || !settings.fieldVideo) p.warnings.push('באתר: שדות קטלוג / ספר הוראות / וידאו לא מוגדרים בהגדרות - למלא ידנית');
+
+  p.wcId = product.id;
+  p.siteUrl = settings.site.replace(/\/+$/, '') + '/wp-admin/post.php?post=' + product.id + '&action=edit';
+}
+
+// Where the site keeps the "קטלוג pdf", "ספר הוראות" and "וידאו מוצר" fields: found from existing products.
+function detectSiteFields(settings) {
+  var products = siteRequest(settings, 'get', '/wc/v3/products?per_page=30&status=any');
+  var score = { catalog: {}, manual: {}, video: {} };
+  var add = function (kind, key, n) { score[kind][key] = (score[kind][key] || 0) + n; };
+  (products || []).forEach(function (pr) {
+    (pr.meta_data || []).forEach(function (m) {
+      var key = String(m.key || '');
+      if (!key || key.charAt(0) === '_') return;
+      var v = typeof m.value === 'string' ? m.value : '';
+      if (/catalog|catalogue|brochure|datasheet|קטלוג/i.test(key)) add('catalog', key, 5);
+      if (/manual|guide|instruction|הוראות/i.test(key)) add('manual', key, 5);
+      if (/video|youtube|וידאו/i.test(key)) add('video', key, 5);
+      if (/youtu\.?be|vimeo\.com/i.test(v)) add('video', key, 1);
+      if (/\.pdf(\?|$)/i.test(v) && !/manual|guide|instruction|הוראות/i.test(key)) add('catalog', key, 1);
+    });
+  });
+  var best = function (kind) {
+    var keys = Object.keys(score[kind]).sort(function (a, b) { return score[kind][b] - score[kind][a]; });
+    return keys[0] || '';
+  };
+  var out = { catalog: best('catalog'), manual: best('manual'), video: best('video') };
+  if (out.manual === out.catalog) out.manual = '';
+  return out;
+}
+
+// Checks the user name + application password, and finds the product fields. Returns '' or an error in Hebrew.
+function connectSite(user, pass) {
+  var settings = readSettings();
+  if (!settings.site) return 'קודם כותבים בהגדרות את כתובת האתר.';
+  var test = { site: settings.site, siteUser: user, sitePass: pass };
+  var me;
+  try {
+    me = siteRequest(test, 'get', '/wp/v2/users/me?context=edit');
+  } catch (e) {
+    if (e.status === 401 || e.status === 403) return 'שם המשתמש או סיסמת האפליקציה לא נכונים (' + e.message + '). אם הם נכונים, ייתכן שחברת האחסון או תוסף אבטחה חוסמים חיבורים כאלה - שולחים את ההודעה הזאת למי שמתחזק את האתר.';
+    return 'לא הצלחתי להתחבר לאתר: ' + e.message;
+  }
+  var caps = me.capabilities || {};
+  if (!caps.edit_products && !caps.manage_woocommerce && !caps.administrator) return 'למשתמש ' + user + ' אין הרשאה לערוך מוצרים באתר.';
+  var fields;
+  try {
+    fields = detectSiteFields(test);
+  } catch (e) {
+    return 'החיבור עבד, אבל ווקומרס לא ענה: ' + e.message;
+  }
+  var props = PropertiesService.getUserProperties();
+  props.setProperty('SITE_USER', user);
+  props.setProperty('SITE_PASS', pass);
+  var map = settingsMap();
+  if (!map['שדה קטלוג pdf'] && fields.catalog) map['שדה קטלוג pdf'] = fields.catalog;
+  if (!map['שדה ספר הוראות'] && fields.manual) map['שדה ספר הוראות'] = fields.manual;
+  if (!map['שדה וידאו מוצר'] && fields.video) map['שדה וידאו מוצר'] = fields.video;
+  saveSettings(map);
+  return '';
+}
+
 // ======================================== App.gs ========================================
 // The app: a web page (Deploy -> Web app) where you paste links, press start, watch progress, open folders
 // and change the settings. No spreadsheet needed.
@@ -1864,6 +2125,7 @@ function steps() {
   [STATUS.official, 'קורא את אתר היצרן', 45, 'working'],
   [STATUS.write, 'כותב בעברית', 65, 'working'],
   [STATUS.save, 'שומר תמונות וקבצים בדרייב', 85, 'working'],
+  [STATUS.publish, 'מעלה לאתר כטיוטה', 93, 'working'],
   [STATUS.doneNotes, 'מוכן, חסר משהו', 100, 'warn'],
   [STATUS.done, 'מוכן', 100, 'done'],
   [STATUS.error, 'נכשל', 100, 'error'],
@@ -1878,14 +2140,15 @@ function appState() {
     var step = steps().filter(function (s) { return status.indexOf(s[0]) === 0; })[0] || ['', status || 'עוד לא התחיל', 0, status ? 'working' : 'idle'];
     return {
       id: it.id, link: it.link, name: it.name, manufacturer: it.manufacturer, step: step[1], pct: step[2], state: step[3],
-      folderUrl: it.folderUrl, notes: it.notes, cost: it.cost || '', canFix: !!it.dataId,
+      folderUrl: it.folderUrl, siteUrl: it.siteUrl || '', notes: it.notes, cost: it.cost || '', canFix: !!it.dataId,
     };
   });
   var props = PropertiesService.getUserProperties();
   var runFolder = null;
   try { runFolder = JSON.parse(props.getProperty('RUN_FOLDER') || 'null'); } catch (e) {}
   var runCost = parseFloat(props.getProperty('RUN_COST') || '0') || 0;
-  return { hasKey: !!readSettings().apiKey, items: items, worker: workerStatus(), runFolder: runFolder, runCost: runCost.toFixed(2) };
+  var settings = readSettings();
+  return { hasKey: !!settings.apiKey, items: items, worker: workerStatus(), runFolder: runFolder, runCost: runCost.toFixed(2), publishing: settings.publish };
 }
 
 // "Fix the text" on a finished product: Claude rewrites it by the user's note, the folder and tables are updated.
@@ -1946,8 +2209,28 @@ function appClearFinished() {
 
 function appGetSettings() {
   ensureOwnCopy();
-  var key = readSettings().apiKey;
-  return { values: settingsMap(), hasKey: !!key, keyEnd: key ? key.slice(-4) : '' };
+  var s = readSettings();
+  return { values: settingsMap(), hasKey: !!s.apiKey, keyEnd: s.apiKey ? s.apiKey.slice(-4) : '', siteUser: s.siteUser, siteConnected: !!(s.siteUser && s.sitePass) };
+}
+
+// Connects the site: WordPress user name + application password.
+function appConnectSite(user, pass) {
+  ensureOwnCopy();
+  user = String(user || '').trim();
+  pass = String(pass || '').trim();
+  if (!user || !pass) return { ok: false, message: 'כותבים שם משתמש וסיסמת אפליקציה.' };
+  SETTINGS_MEMO = null;
+  var err = connectSite(user, pass);
+  SETTINGS_MEMO = null;
+  return err ? { ok: false, message: err } : { ok: true, message: 'האתר מחובר ✓ מוצרים חדשים ייכנסו לאתר כטיוטה.', settings: appGetSettings() };
+}
+
+function appDisconnectSite() {
+  var props = PropertiesService.getUserProperties();
+  props.deleteProperty('SITE_USER');
+  props.deleteProperty('SITE_PASS');
+  SETTINGS_MEMO = null;
+  return appGetSettings();
 }
 
 function appSaveSettings(values) {
@@ -2031,6 +2314,9 @@ var APP_HTML = `<!doctype html>
   .open { white-space:nowrap; flex:none; display:inline-flex; align-items:center; gap:6px; text-decoration:none; font-weight:700; font-size:13px; color:var(--ink);
     border:1.5px solid var(--ink); border-radius:8px; padding:6px 12px; transition:background .15s, color .15s; }
   .open:hover { background:var(--ink); color:#fff; }
+  .open.site { background:var(--red); border-color:var(--red); color:#fff; }
+  .open.site:hover { background:var(--red-dark); border-color:var(--red-dark); }
+  .btns { flex-wrap:wrap; justify-content:flex-end; }
   .open svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; }
   details { font-size:12px; color:var(--ink-2); } summary { cursor:pointer; color:var(--muted); font-weight:500; }
   details[open] summary { margin-bottom:4px; }
@@ -2157,6 +2443,32 @@ var APP_HTML = `<!doctype html>
     </section>
 
     <section class="card">
+      <p class="label">חיבור לאתר</p>
+      <p id="siteState" class="sub"></p>
+      <p class="hint" style="margin:0">כך כל מוצר נכנס לאתר כ<b>טיוטה</b> עם כל השדות והתמונות. באתר: <b>משתמשים ← הפרופיל שלי ← סיסמאות אפליקציה</b> ← כותבים שם (למשל "סורק מוצרים") ← <b>הוספה</b> ← מעתיקים את הסיסמה שמופיעה.</p>
+      <div class="grid2">
+        <div class="field"><label for="siteUser">שם משתמש באתר</label><input id="siteUser" autocomplete="off" placeholder="borism"></div>
+        <div class="field"><label for="sitePass">סיסמת אפליקציה</label><input id="sitePass" type="password" autocomplete="off" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"></div>
+      </div>
+      <div class="row"><button id="connectSite" class="ghost" type="button">חבר את האתר</button><button id="disconnectSite" class="ghost" type="button" hidden>נתק</button></div>
+      <p id="siteMsg" class="msg" role="status"></p>
+      <div class="field">
+        <label>להעלות מוצרים לאתר</label>
+        <div class="seg" data-key="להעלות לאתר">
+          <button type="button" data-v="כן">כן<small>כטיוטה, לבדיקה ולפרסום</small></button>
+          <button type="button" data-v="לא">לא<small>רק לדרייב</small></button>
+        </div>
+      </div>
+      <details><summary>שדות מתקדמים (מתמלאים לבד)</summary>
+        <div class="grid2" style="margin-top:8px">
+          <div class="field"><label>שדה "קטלוג pdf"</label><input data-key="שדה קטלוג pdf"></div>
+          <div class="field"><label>שדה "ספר הוראות"</label><input data-key="שדה ספר הוראות"></div>
+          <div class="field"><label>שדה "וידאו מוצר"</label><input data-key="שדה וידאו מוצר"></div>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
       <div class="field">
         <label for="s-glossary">מילון מונחים</label>
         <p class="hint">שורה לכל מונח: אנגלית = איך אומרים אצלנו. מילה שיצאה לא טוב? מוסיפים אותה כאן.</p>
@@ -2194,7 +2506,9 @@ var APP_HTML = `<!doctype html>
   var $ = function (id) { return document.getElementById(id); };
   var timer = null;
   var stopArmed = false;
-  var STEP_NAMES = ['יצרן', 'אתר', 'עברית', 'דרייב'];
+  var STEP_NAMES = ['יצרן', 'מקור', 'עברית', 'דרייב'];
+  var SITE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>';
+  var publishing = false;
   var FOLDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -2208,9 +2522,10 @@ var APP_HTML = `<!doctype html>
 
   // Which of the 4 steps is running (pct 25/45/65/85 -> step 0..3); finished items fill all 4.
   function stepsHtml(it) {
-    var now = { 25: 0, 45: 1, 65: 2, 85: 3 }[it.pct];
+    var names = publishing || it.siteUrl ? STEP_NAMES.concat('אתר') : STEP_NAMES;
+    var now = { 25: 0, 45: 1, 65: 2, 85: 3, 93: 4 }[it.pct];
     var finished = it.pct === 100 && (it.state === 'done' || it.state === 'warn');
-    return '<div class="steps">' + STEP_NAMES.map(function (n, i) {
+    return '<div class="steps" style="grid-template-columns:repeat(' + names.length + ',1fr)">' + names.map(function (n, i) {
       var cls = finished || (now !== undefined && i < now) ? 'on' : (i === now ? 'now' : '');
       return '<span class="' + cls + '">' + n + '</span>';
     }).join('') + '</div>';
@@ -2222,6 +2537,7 @@ var APP_HTML = `<!doctype html>
 
   function render(state) {
     last = state;
+    publishing = !!state.publishing;
     $('keyCard').hidden = state.hasKey;
     var w = state.worker || {};
     $('worker').className = 'worker' + (w.lastError ? ' bad' : '');
@@ -2246,7 +2562,8 @@ var APP_HTML = `<!doctype html>
           '<div class="actions"><span class="state">' + esc(it.step) + (it.cost && (it.state === 'done' || it.state === 'warn') ? ' <span class="icost">· כ-' + esc(it.cost) + '$</span>' : '') + '</span>' +
             '<span class="btns">' +
             (it.canFix && (it.state === 'done' || it.state === 'warn') ? '<button class="fixbtn" type="button" data-fix="' + esc(it.id) + '">✏️ תקן טקסט</button>' : '') +
-            (it.folderUrl ? '<a class="open" href="' + esc(it.folderUrl) + '" target="_blank" rel="noopener">' + FOLDER_ICON + 'פתח תיקייה</a>' : '') +
+            (it.siteUrl && (it.state === 'done' || it.state === 'warn') ? '<a class="open site" href="' + esc(it.siteUrl) + '" target="_blank" rel="noopener">' + SITE_ICON + 'פתח באתר</a>' : '') +
+            (it.folderUrl ? '<a class="open" href="' + esc(it.folderUrl) + '" target="_blank" rel="noopener">' + FOLDER_ICON + 'תיקייה</a>' : '') +
           '</span></div>' +
           (fixOpen[it.id] ? '<div class="fix" data-box="' + esc(it.id) + '"><textarea placeholder="מה לתקן? למשל: לקצר את התיאור הקצר, להדגיש את העמידות למים, לכתוב מצלמה תרמית ולא מצלמת חום">' + esc(fixOpen[it.id].text) + '</textarea>' +
             '<div class="row"><button class="primary" type="button" data-send="' + esc(it.id) + '">שלח לתיקון</button><button class="ghost" type="button" data-cancel="' + esc(it.id) + '">ביטול</button></div>' +
@@ -2333,6 +2650,8 @@ var APP_HTML = `<!doctype html>
       else el.value = v;
     });
     $('keyState').textContent = r.hasKey ? 'שמור מפתח שמסתיים ב-' + r.keyEnd : 'עוד לא נשמר מפתח.';
+    $('siteState').textContent = r.siteConnected ? 'מחובר בתור ' + r.siteUser + '.' : 'לא מחובר: המוצרים נשמרים רק בדרייב.';
+    $('disconnectSite').hidden = !r.siteConnected;
   }
   document.querySelectorAll('.seg button').forEach(function (b) {
     b.addEventListener('click', function () {
@@ -2358,6 +2677,19 @@ var APP_HTML = `<!doctype html>
   $('reset').addEventListener('click', function () {
     google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('setMsg'), 'חזרנו להגדרות ברירת המחדל ✓', true); }).appResetSettings();
   });
+  $('connectSite').addEventListener('click', function () {
+    $('connectSite').disabled = true;
+    say($('siteMsg'), 'בודק את החיבור לאתר…', true);
+    google.script.run.withSuccessHandler(function (r) {
+      $('connectSite').disabled = false; say($('siteMsg'), r.message, r.ok);
+      if (r.ok) { $('sitePass').value = ''; fillSettings(r.settings); }
+    }).withFailureHandler(function (e) { $('connectSite').disabled = false; say($('siteMsg'), 'משהו השתבש: ' + (e && e.message || e)); })
+      .appConnectSite($('siteUser').value, $('sitePass').value);
+  });
+  $('disconnectSite').addEventListener('click', function () {
+    google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('siteMsg'), 'האתר נותק.', true); }).appDisconnectSite();
+  });
+
   $('saveKey2').addEventListener('click', function () {
     $('saveKey2').disabled = true;
     say($('keyMsg2'), 'בודק את המפתח…', true);
@@ -2448,6 +2780,8 @@ var APP_HTML = `<!doctype html>
       else el.value = v;
     });
     $('keyState').textContent = r.hasKey ? 'שמור מפתח שמסתיים ב-' + r.keyEnd : 'עוד לא נשמר מפתח.';
+    $('siteState').textContent = r.siteConnected ? 'מחובר בתור ' + r.siteUser + '.' : 'לא מחובר: המוצרים נשמרים רק בדרייב.';
+    $('disconnectSite').hidden = !r.siteConnected;
   }
   document.querySelectorAll('.seg button').forEach(function (b) {
     b.addEventListener('click', function () {
@@ -2473,6 +2807,19 @@ var APP_HTML = `<!doctype html>
   $('reset').addEventListener('click', function () {
     google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('setMsg'), 'חזרנו להגדרות ברירת המחדל ✓', true); }).appResetSettings();
   });
+  $('connectSite').addEventListener('click', function () {
+    $('connectSite').disabled = true;
+    say($('siteMsg'), 'בודק את החיבור לאתר…', true);
+    google.script.run.withSuccessHandler(function (r) {
+      $('connectSite').disabled = false; say($('siteMsg'), r.message, r.ok);
+      if (r.ok) { $('sitePass').value = ''; fillSettings(r.settings); }
+    }).withFailureHandler(function (e) { $('connectSite').disabled = false; say($('siteMsg'), 'משהו השתבש: ' + (e && e.message || e)); })
+      .appConnectSite($('siteUser').value, $('sitePass').value);
+  });
+  $('disconnectSite').addEventListener('click', function () {
+    google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('siteMsg'), 'האתר נותק.', true); }).appDisconnectSite();
+  });
+
   $('saveKey2').addEventListener('click', function () {
     $('saveKey2').disabled = true;
     say($('keyMsg2'), 'בודק את המפתח…', true);

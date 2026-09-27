@@ -107,3 +107,56 @@ export const hebrew = (extra = {}) => text(JSON.stringify({
   specs: [], category: "", tags: ["תגית"], focus_keyphrase: "מוצר לדוגמה", seo_title: "מוצר לדוגמה", meta_description: "תיאור מטא.", slug: "sample",
   image_indexes: [], brochure_index: -1, manual_index: -1, video_indexes: [], ...extra,
 }));
+
+// A tiny fake WordPress + WooCommerce site at https://shop.test (REST API with an application password).
+export function fakeWp({ user = "borism", pass = "abcd efgh ijkl", brands = true, existing = [] } = {}) {
+  const site = { products: [...existing], media: [], tags: [], brands: [], requests: [], nextId: 100 };
+  const auth = "Basic " + Buffer.from(user + ":" + pass).toString("base64");
+  const json = (body, code = 200) => ({ code, body, type: "application/json" });
+  site.handle = (url, opts) => {
+    if (!url.startsWith("https://shop.test/wp-json/")) return null;
+    const u = new URL(url);
+    const path = u.pathname.replace("/wp-json", "");
+    const method = (opts.method || "get").toLowerCase();
+    const q = (k) => u.searchParams.get(k);
+    const body = typeof opts.payload === "string" ? JSON.parse(opts.payload) : null;
+    site.requests.push({ method, path: path + u.search, body });
+    if (path === "/wc/store/v1/products/categories") return json([{ id: 15, name: "מצלמות תרמיות" }, { id: 16, name: "וידאוסקופים" }, { id: 17, name: "כללי" }]);
+    if ((opts.headers || {}).Authorization !== auth) return json({ code: "rest_not_logged_in", message: "You are not currently logged in." }, 401);
+    if (path === "/wp/v2/users/me") return json({ id: 1, name: user, capabilities: { edit_products: true } });
+    if (path === "/wp/v2/media" && method === "post") {
+      const filename = /filename="([^"]+)"/.exec(opts.headers["Content-Disposition"])[1];
+      const m = { id: site.nextId++, filename, size: opts.payload.length, type: opts.contentType, source_url: "https://shop.test/wp-content/uploads/" + filename };
+      site.media.push(m);
+      return json(m, 201);
+    }
+    let m = path.match(/^\/wp\/v2\/media\/(\d+)$/);
+    if (m) { const x = site.media.find((y) => y.id === +m[1]); Object.assign(x, body); return json(x); }
+    for (const [base, list, on] of [["/wc/v3/products/tags", site.tags, true], ["/wc/v3/products/brands", site.brands, brands]]) {
+      if (path !== base) continue;
+      if (!on) return json({ code: "rest_no_route", message: "No route was found matching the URL and request method." }, 404);
+      if (method === "post") { const t = { id: site.nextId++, name: body.name }; list.push(t); return json(t, 201); }
+      return json(list.filter((t) => t.name.includes(q("search") || "")));
+    }
+    const toProduct = (b, id, old = {}) => ({
+      ...old, ...b, id, status: b.status || old.status || "draft",
+      brands: brands && b.brands ? b.brands : old.brands || [],
+      permalink: "https://shop.test/?p=" + id,
+    });
+    if (path === "/wc/v3/products" && method === "post") { const p = toProduct(body, site.nextId++); site.products.push(p); return json(p, 201); }
+    if (path === "/wc/v3/products") {
+      let list = site.products;
+      if (q("slug")) list = list.filter((p) => p.slug === q("slug"));
+      return json(list);
+    }
+    m = path.match(/^\/wc\/v3\/products\/(\d+)$/);
+    if (m) {
+      const i = site.products.findIndex((p) => p.id === +m[1]);
+      if (i < 0) return json({ code: "woocommerce_rest_product_invalid_id", message: "Invalid ID." }, 404);
+      if (method === "put") site.products[i] = toProduct(body, +m[1], site.products[i]);
+      return json(site.products[i]);
+    }
+    return json({ code: "rest_no_route", message: "No route" }, 404);
+  };
+  return site;
+}

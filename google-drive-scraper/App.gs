@@ -20,6 +20,7 @@ function steps() {
   [STATUS.official, 'קורא את אתר היצרן', 45, 'working'],
   [STATUS.write, 'כותב בעברית', 65, 'working'],
   [STATUS.save, 'שומר תמונות וקבצים בדרייב', 85, 'working'],
+  [STATUS.publish, 'מעלה לאתר כטיוטה', 93, 'working'],
   [STATUS.doneNotes, 'מוכן, חסר משהו', 100, 'warn'],
   [STATUS.done, 'מוכן', 100, 'done'],
   [STATUS.error, 'נכשל', 100, 'error'],
@@ -34,14 +35,15 @@ function appState() {
     var step = steps().filter(function (s) { return status.indexOf(s[0]) === 0; })[0] || ['', status || 'עוד לא התחיל', 0, status ? 'working' : 'idle'];
     return {
       id: it.id, link: it.link, name: it.name, manufacturer: it.manufacturer, step: step[1], pct: step[2], state: step[3],
-      folderUrl: it.folderUrl, notes: it.notes, cost: it.cost || '', canFix: !!it.dataId,
+      folderUrl: it.folderUrl, siteUrl: it.siteUrl || '', notes: it.notes, cost: it.cost || '', canFix: !!it.dataId,
     };
   });
   var props = PropertiesService.getUserProperties();
   var runFolder = null;
   try { runFolder = JSON.parse(props.getProperty('RUN_FOLDER') || 'null'); } catch (e) {}
   var runCost = parseFloat(props.getProperty('RUN_COST') || '0') || 0;
-  return { hasKey: !!readSettings().apiKey, items: items, worker: workerStatus(), runFolder: runFolder, runCost: runCost.toFixed(2) };
+  var settings = readSettings();
+  return { hasKey: !!settings.apiKey, items: items, worker: workerStatus(), runFolder: runFolder, runCost: runCost.toFixed(2), publishing: settings.publish };
 }
 
 // "Fix the text" on a finished product: Claude rewrites it by the user's note, the folder and tables are updated.
@@ -102,8 +104,28 @@ function appClearFinished() {
 
 function appGetSettings() {
   ensureOwnCopy();
-  var key = readSettings().apiKey;
-  return { values: settingsMap(), hasKey: !!key, keyEnd: key ? key.slice(-4) : '' };
+  var s = readSettings();
+  return { values: settingsMap(), hasKey: !!s.apiKey, keyEnd: s.apiKey ? s.apiKey.slice(-4) : '', siteUser: s.siteUser, siteConnected: !!(s.siteUser && s.sitePass) };
+}
+
+// Connects the site: WordPress user name + application password.
+function appConnectSite(user, pass) {
+  ensureOwnCopy();
+  user = String(user || '').trim();
+  pass = String(pass || '').trim();
+  if (!user || !pass) return { ok: false, message: 'כותבים שם משתמש וסיסמת אפליקציה.' };
+  SETTINGS_MEMO = null;
+  var err = connectSite(user, pass);
+  SETTINGS_MEMO = null;
+  return err ? { ok: false, message: err } : { ok: true, message: 'האתר מחובר ✓ מוצרים חדשים ייכנסו לאתר כטיוטה.', settings: appGetSettings() };
+}
+
+function appDisconnectSite() {
+  var props = PropertiesService.getUserProperties();
+  props.deleteProperty('SITE_USER');
+  props.deleteProperty('SITE_PASS');
+  SETTINGS_MEMO = null;
+  return appGetSettings();
 }
 
 function appSaveSettings(values) {
@@ -187,6 +209,9 @@ var APP_HTML = `<!doctype html>
   .open { white-space:nowrap; flex:none; display:inline-flex; align-items:center; gap:6px; text-decoration:none; font-weight:700; font-size:13px; color:var(--ink);
     border:1.5px solid var(--ink); border-radius:8px; padding:6px 12px; transition:background .15s, color .15s; }
   .open:hover { background:var(--ink); color:#fff; }
+  .open.site { background:var(--red); border-color:var(--red); color:#fff; }
+  .open.site:hover { background:var(--red-dark); border-color:var(--red-dark); }
+  .btns { flex-wrap:wrap; justify-content:flex-end; }
   .open svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; }
   details { font-size:12px; color:var(--ink-2); } summary { cursor:pointer; color:var(--muted); font-weight:500; }
   details[open] summary { margin-bottom:4px; }
@@ -313,6 +338,32 @@ var APP_HTML = `<!doctype html>
     </section>
 
     <section class="card">
+      <p class="label">חיבור לאתר</p>
+      <p id="siteState" class="sub"></p>
+      <p class="hint" style="margin:0">כך כל מוצר נכנס לאתר כ<b>טיוטה</b> עם כל השדות והתמונות. באתר: <b>משתמשים ← הפרופיל שלי ← סיסמאות אפליקציה</b> ← כותבים שם (למשל "סורק מוצרים") ← <b>הוספה</b> ← מעתיקים את הסיסמה שמופיעה.</p>
+      <div class="grid2">
+        <div class="field"><label for="siteUser">שם משתמש באתר</label><input id="siteUser" autocomplete="off" placeholder="borism"></div>
+        <div class="field"><label for="sitePass">סיסמת אפליקציה</label><input id="sitePass" type="password" autocomplete="off" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"></div>
+      </div>
+      <div class="row"><button id="connectSite" class="ghost" type="button">חבר את האתר</button><button id="disconnectSite" class="ghost" type="button" hidden>נתק</button></div>
+      <p id="siteMsg" class="msg" role="status"></p>
+      <div class="field">
+        <label>להעלות מוצרים לאתר</label>
+        <div class="seg" data-key="להעלות לאתר">
+          <button type="button" data-v="כן">כן<small>כטיוטה, לבדיקה ולפרסום</small></button>
+          <button type="button" data-v="לא">לא<small>רק לדרייב</small></button>
+        </div>
+      </div>
+      <details><summary>שדות מתקדמים (מתמלאים לבד)</summary>
+        <div class="grid2" style="margin-top:8px">
+          <div class="field"><label>שדה "קטלוג pdf"</label><input data-key="שדה קטלוג pdf"></div>
+          <div class="field"><label>שדה "ספר הוראות"</label><input data-key="שדה ספר הוראות"></div>
+          <div class="field"><label>שדה "וידאו מוצר"</label><input data-key="שדה וידאו מוצר"></div>
+        </div>
+      </details>
+    </section>
+
+    <section class="card">
       <div class="field">
         <label for="s-glossary">מילון מונחים</label>
         <p class="hint">שורה לכל מונח: אנגלית = איך אומרים אצלנו. מילה שיצאה לא טוב? מוסיפים אותה כאן.</p>
@@ -350,7 +401,9 @@ var APP_HTML = `<!doctype html>
   var $ = function (id) { return document.getElementById(id); };
   var timer = null;
   var stopArmed = false;
-  var STEP_NAMES = ['יצרן', 'אתר', 'עברית', 'דרייב'];
+  var STEP_NAMES = ['יצרן', 'מקור', 'עברית', 'דרייב'];
+  var SITE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>';
+  var publishing = false;
   var FOLDER_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -364,9 +417,10 @@ var APP_HTML = `<!doctype html>
 
   // Which of the 4 steps is running (pct 25/45/65/85 -> step 0..3); finished items fill all 4.
   function stepsHtml(it) {
-    var now = { 25: 0, 45: 1, 65: 2, 85: 3 }[it.pct];
+    var names = publishing || it.siteUrl ? STEP_NAMES.concat('אתר') : STEP_NAMES;
+    var now = { 25: 0, 45: 1, 65: 2, 85: 3, 93: 4 }[it.pct];
     var finished = it.pct === 100 && (it.state === 'done' || it.state === 'warn');
-    return '<div class="steps">' + STEP_NAMES.map(function (n, i) {
+    return '<div class="steps" style="grid-template-columns:repeat(' + names.length + ',1fr)">' + names.map(function (n, i) {
       var cls = finished || (now !== undefined && i < now) ? 'on' : (i === now ? 'now' : '');
       return '<span class="' + cls + '">' + n + '</span>';
     }).join('') + '</div>';
@@ -378,6 +432,7 @@ var APP_HTML = `<!doctype html>
 
   function render(state) {
     last = state;
+    publishing = !!state.publishing;
     $('keyCard').hidden = state.hasKey;
     var w = state.worker || {};
     $('worker').className = 'worker' + (w.lastError ? ' bad' : '');
@@ -402,7 +457,8 @@ var APP_HTML = `<!doctype html>
           '<div class="actions"><span class="state">' + esc(it.step) + (it.cost && (it.state === 'done' || it.state === 'warn') ? ' <span class="icost">· כ-' + esc(it.cost) + '$</span>' : '') + '</span>' +
             '<span class="btns">' +
             (it.canFix && (it.state === 'done' || it.state === 'warn') ? '<button class="fixbtn" type="button" data-fix="' + esc(it.id) + '">✏️ תקן טקסט</button>' : '') +
-            (it.folderUrl ? '<a class="open" href="' + esc(it.folderUrl) + '" target="_blank" rel="noopener">' + FOLDER_ICON + 'פתח תיקייה</a>' : '') +
+            (it.siteUrl && (it.state === 'done' || it.state === 'warn') ? '<a class="open site" href="' + esc(it.siteUrl) + '" target="_blank" rel="noopener">' + SITE_ICON + 'פתח באתר</a>' : '') +
+            (it.folderUrl ? '<a class="open" href="' + esc(it.folderUrl) + '" target="_blank" rel="noopener">' + FOLDER_ICON + 'תיקייה</a>' : '') +
           '</span></div>' +
           (fixOpen[it.id] ? '<div class="fix" data-box="' + esc(it.id) + '"><textarea placeholder="מה לתקן? למשל: לקצר את התיאור הקצר, להדגיש את העמידות למים, לכתוב מצלמה תרמית ולא מצלמת חום">' + esc(fixOpen[it.id].text) + '</textarea>' +
             '<div class="row"><button class="primary" type="button" data-send="' + esc(it.id) + '">שלח לתיקון</button><button class="ghost" type="button" data-cancel="' + esc(it.id) + '">ביטול</button></div>' +
@@ -489,6 +545,8 @@ var APP_HTML = `<!doctype html>
       else el.value = v;
     });
     $('keyState').textContent = r.hasKey ? 'שמור מפתח שמסתיים ב-' + r.keyEnd : 'עוד לא נשמר מפתח.';
+    $('siteState').textContent = r.siteConnected ? 'מחובר בתור ' + r.siteUser + '.' : 'לא מחובר: המוצרים נשמרים רק בדרייב.';
+    $('disconnectSite').hidden = !r.siteConnected;
   }
   document.querySelectorAll('.seg button').forEach(function (b) {
     b.addEventListener('click', function () {
@@ -514,6 +572,19 @@ var APP_HTML = `<!doctype html>
   $('reset').addEventListener('click', function () {
     google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('setMsg'), 'חזרנו להגדרות ברירת המחדל ✓', true); }).appResetSettings();
   });
+  $('connectSite').addEventListener('click', function () {
+    $('connectSite').disabled = true;
+    say($('siteMsg'), 'בודק את החיבור לאתר…', true);
+    google.script.run.withSuccessHandler(function (r) {
+      $('connectSite').disabled = false; say($('siteMsg'), r.message, r.ok);
+      if (r.ok) { $('sitePass').value = ''; fillSettings(r.settings); }
+    }).withFailureHandler(function (e) { $('connectSite').disabled = false; say($('siteMsg'), 'משהו השתבש: ' + (e && e.message || e)); })
+      .appConnectSite($('siteUser').value, $('sitePass').value);
+  });
+  $('disconnectSite').addEventListener('click', function () {
+    google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('siteMsg'), 'האתר נותק.', true); }).appDisconnectSite();
+  });
+
   $('saveKey2').addEventListener('click', function () {
     $('saveKey2').disabled = true;
     say($('keyMsg2'), 'בודק את המפתח…', true);
@@ -604,6 +675,8 @@ var APP_HTML = `<!doctype html>
       else el.value = v;
     });
     $('keyState').textContent = r.hasKey ? 'שמור מפתח שמסתיים ב-' + r.keyEnd : 'עוד לא נשמר מפתח.';
+    $('siteState').textContent = r.siteConnected ? 'מחובר בתור ' + r.siteUser + '.' : 'לא מחובר: המוצרים נשמרים רק בדרייב.';
+    $('disconnectSite').hidden = !r.siteConnected;
   }
   document.querySelectorAll('.seg button').forEach(function (b) {
     b.addEventListener('click', function () {
@@ -629,6 +702,19 @@ var APP_HTML = `<!doctype html>
   $('reset').addEventListener('click', function () {
     google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('setMsg'), 'חזרנו להגדרות ברירת המחדל ✓', true); }).appResetSettings();
   });
+  $('connectSite').addEventListener('click', function () {
+    $('connectSite').disabled = true;
+    say($('siteMsg'), 'בודק את החיבור לאתר…', true);
+    google.script.run.withSuccessHandler(function (r) {
+      $('connectSite').disabled = false; say($('siteMsg'), r.message, r.ok);
+      if (r.ok) { $('sitePass').value = ''; fillSettings(r.settings); }
+    }).withFailureHandler(function (e) { $('connectSite').disabled = false; say($('siteMsg'), 'משהו השתבש: ' + (e && e.message || e)); })
+      .appConnectSite($('siteUser').value, $('sitePass').value);
+  });
+  $('disconnectSite').addEventListener('click', function () {
+    google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('siteMsg'), 'האתר נותק.', true); }).appDisconnectSite();
+  });
+
   $('saveKey2').addEventListener('click', function () {
     $('saveKey2').disabled = true;
     say($('keyMsg2'), 'בודק את המפתח…', true);
