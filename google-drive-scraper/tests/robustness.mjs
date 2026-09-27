@@ -555,6 +555,75 @@ test("app: the list is capped (oldest finished products dropped), and updates do
   assert.equal(p.run("getItems").at(-1).status, "✗ שגיאה");
 });
 
+test("app: 'fix the text' sends a finished product back to Claude with the note, and updates its folder and tables", () => {
+  let n = 0;
+  const claude = fakeClaude((params) => {
+    if (params.tools) return researchJson(OFFICIAL);
+    const t = params.messages[0].content.at(-1).text;
+    if (t.includes("<requested_changes>")) return hebrew({ name: "מוצר מתוקן", short_description: "תיאור קצר מתוקן.", image_indexes: [0, 1, 2] });
+    n++;
+    return hebrew({ image_indexes: [0, 1, 2] });
+  });
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.runUntilIdle();
+  // Meanwhile the user switched the main folder for the next run: the fix still goes to the product's own folder.
+  setSetting(p, "תיקייה בדרייב", "סריקה 2");
+  const item = p.run("appState").items[0];
+  assert.equal(item.canFix, true);
+  assert.equal(p.run("appRevise", item.id, "").ok, false);
+  const r = p.run("appRevise", item.id, "לקצר את התיאור הקצר");
+  assert.equal(r.ok, true, r.message);
+  assert.equal(p.run("appRevise", item.id, "עוד משהו").ok, false, "fix accepted while the product is still being fixed");
+  p.runUntilIdle();
+  const last = claude.requests.at(-1).params.messages[0].content.at(-1).text;
+  assert.match(last, /<requested_changes>\nלקצר את התיאור הקצר/);
+  assert.match(last, /<previous_version>[\s\S]*מוצר לדוגמה/, "Claude didn't get the text it wrote before");
+  assert.equal(p.rows().length, 1, "the fix added a product to the list");
+  assert.match(String(p.rows()[0][1]), /✓/);
+  assert.equal(p.rows()[0][2], "מוצר מתוקן");
+  const root = rootOf(p);
+  const folders = liveFolders(root).filter((f) => f.name.startsWith("MAKER-A100"));
+  assert.equal(folders.length, 1);
+  assert.match(folders[0].name, /מוצר מתוקן/);
+  const table = p.ctx.parseCsv(root.files.find((f) => f.getName() === "כל המוצרים.csv" && !f.trashed).getBlob().getDataAsString());
+  assert.equal(table.length, 2);
+  assert.equal(table[1][1], "מוצר מתוקן");
+  assert.ok(!p.g.myDrive.folders.some((f) => f.name === "סריקה 2" && liveFolders(f).length), "fix saved in the new main folder");
+  // Fixing again works from the fixed version.
+  assert.equal(p.run("appRevise", item.id, "עוד תיקון").ok, true);
+  p.runUntilIdle();
+  assert.match(claude.requests.at(-1).params.messages[0].content.at(-1).text, /מוצר מתוקן/);
+});
+
+test("app: cost of the run and of each product; buttons for the run folder and the table of all products", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100", "https://maker.test/p/a100?n=2"]);
+  p.start();
+  p.runUntilIdle();
+  const st = p.run("appState");
+  // Each fake answer: 100k input * $2 + 5k output * $10 per million + 2 searches * $0.01 = $0.27 (batch: tokens at half price = $0.145).
+  // A product = research + write.
+  assert.ok(st.items.every((i) => Math.abs(+i.cost - (FAST ? 0.54 : 0.29)) < 0.011), "item costs " + st.items.map((i) => i.cost));
+  assert.ok(Math.abs(+st.runCost - 2 * +st.items[0].cost) < 0.011, "run cost " + st.runCost);
+  assert.equal(st.runFolder.name, "NDT24 - מוצרים");
+  assert.equal(st.runFolder.url, rootOf(p).getUrl());
+  assert.match(st.runFolder.tableUrl, /^https:\/\/drive\.google\.com\/file\//);
+  // A new run starts counting from zero, and shows its own folder once something is saved there.
+  setSetting(p, "תיקייה בדרייב", "סריקה 2");
+  p.addLinks(["https://maker.test/p/a100?n=3"]);
+  p.start();
+  let st2 = p.run("appState");
+  assert.equal(+st2.runCost, 0);
+  assert.equal(st2.runFolder, null);
+  p.runUntilIdle();
+  st2 = p.run("appState");
+  assert.equal(st2.runFolder.name, "סריקה 2");
+  assert.ok(Math.abs(+st2.runCost - +st.items[0].cost) < 0.011);
+});
+
 // ---------- fast mode (direct calls) ----------
 const fastMode = { fast: true };
 

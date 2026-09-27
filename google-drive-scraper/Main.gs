@@ -46,6 +46,7 @@ function queueLinks(links) {
   try {
     var list = getItems();
     var stages = getStages();
+    if (!Object.keys(stages).length) startNewRun();
     var stamp = Date.now().toString(36);
     links.forEach(function (link, i) {
       var id = 'p' + stamp + 'n' + i;
@@ -180,7 +181,7 @@ function setRowStatus(id, status, extra) {
   if (!it) return;
   it.status = status;
   extra = extra || {};
-  ['name', 'manufacturer', 'folderUrl', 'notes'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
+  ['name', 'manufacturer', 'folderUrl', 'notes', 'cost', 'dataId'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
   ITEMS_DIRTY = true;
 }
 
@@ -350,6 +351,7 @@ function runClaudeNow(settings, kind) {
         return;
       }
       try {
+        addCost(p, a.result, false);
         if (kind === 'research') applyResearch(p, a.result);
         else applyWrite(p, a.result);
         saveState(p, m);
@@ -477,14 +479,25 @@ function stepSave(settings, p) {
   var stem = fileStem(p.research.manufacturer, p.research.model || (p.supplier && p.supplier.title) || '');
   // Without a known manufacturer/model the name isn't unique: add the product's id.
   if (!p.research.manufacturer || !p.research.model) stem += '-' + p.id.toUpperCase();
-  var root = rootFolder(settings);
+  var root = null;
   var folder = null;
-  var it = root.getFolders();   // re-running a product updates its existing folder
-  while (it.hasNext() && !folder) {
-    var f = it.next();
-    if (!f.isTrashed() && (f.getName() === stem || f.getName().indexOf(stem + ' - ') === 0)) folder = f;
+  if (p.folderId) {   // a text fix: save into the product's folder, even if the main folder setting changed since
+    try {
+      folder = DriveApp.getFolderById(p.folderId);
+      var parents = folder.getParents();
+      root = !folder.isTrashed() && parents.hasNext() ? parents.next() : null;
+    } catch (e) {}
+    if (!root) folder = null;
   }
-  folder = folder || root.createFolder(stem);
+  if (!folder) {
+    root = rootFolder(settings);
+    var it = root.getFolders();   // re-running a product updates its existing folder
+    while (it.hasNext() && !folder) {
+      var f = it.next();
+      if (!f.isTrashed() && (f.getName() === stem || f.getName().indexOf(stem + ' - ') === 0)) folder = f;
+    }
+    folder = folder || root.createFolder(stem);
+  }
 
   var saved = { images: [], docs: [], videos: [] };
   saved.images = saveImages(folder, stem, uniqueIndexes(c.image_indexes, off.images.length).map(function (i) { return off.images[i]; }));
@@ -517,14 +530,93 @@ function stepSave(settings, p) {
   });
   var row = productRow(p, stem, folder.getUrl());
   replaceFile(folder, stem + '.csv', csvBlob([CSV_HEADERS, row], stem + '.csv'));
-  updateAllProductsCsv(root, row);
+  var table = updateAllProductsCsv(root, row);
   folder.setName(stem + ' - ' + c.name);
+  PropertiesService.getUserProperties().setProperty('RUN_FOLDER', JSON.stringify({ name: root.getName(), url: root.getUrl(), tableUrl: table.getUrl() }));
 
   p.stage = 'done';
   p.folderUrl = folder.getUrl();
+  p.folderId = folder.getId();
+  p.revision = null;
+  var dataId = saveProductData(p);
   setRowStatus(p.id, p.warnings.length ? STATUS.doneNotes : STATUS.done, {
     name: c.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl, notes: p.warnings.join(' · '),
+    cost: (p.cost || 0).toFixed(2), dataId: dataId,
   });
+}
+
+// ---------------- Fixing a finished product's text ----------------
+
+var DATA_FOLDER = '_סורק מוצרים - נתונים (לא למחוק)';
+
+// Everything Claude needs to rewrite a product later, kept outside the product folders.
+function saveProductData(p) {
+  try {
+    var folder = firstLive(DriveApp.getFoldersByName(DATA_FOLDER)) || DriveApp.createFolder(DATA_FOLDER);
+    var json = JSON.stringify(p);
+    var file = firstLive(folder.getFilesByName(p.id + '.json'));
+    if (file) file.setContent(json);
+    else file = folder.createFile(p.id + '.json', json, 'application/json');
+    return file.getId();
+  } catch (e) {
+    console.warn('product data not saved: ' + e.message);
+    return '';
+  }
+}
+
+// Sends a finished product back to Claude with the user's request; the save step then updates its folder and tables.
+function reviseProduct(id, note) {
+  var lock = LockService.getUserLock();
+  lock.waitLock(60000);
+  try {
+    var it = getItems().filter(function (x) { return x.id === id; })[0];
+    if (!it || !it.dataId) return 'אי אפשר לתקן את המוצר הזה. סורקים אותו מחדש.';
+    var stages = getStages();
+    if (stages[id]) return 'המוצר עדיין בעבודה.';
+    var p;
+    try { p = JSON.parse(DriveApp.getFileById(it.dataId).getBlob().getDataAsString('UTF-8')); } catch (e) { return 'לא מצאתי את הנתונים של המוצר. סורקים אותו מחדש.'; }
+    if (!Object.keys(stages).length) startNewRun();
+    p.revision = { note: note, previous: p.content };
+    p.stage = 'write_pending';
+    p.writeAttempts = 0;
+    p.stepTries = {};
+    p.nowErrors = 0;
+    p.useBatch = null;
+    p.cost = 0;
+    delete p.batchId;
+    saveState(p, stages);
+    setStages(stages);
+    setRowStatus(id, STATUS.write, { notes: '' });
+    flushItems();
+  } finally {
+    lock.releaseLock();
+  }
+  setTriggerEvery(1);
+  return '';
+}
+
+// ---------------- Cost ----------------
+
+// USD per million tokens (standard API prices); batch jobs cost half. Web search: $10 per 1,000 searches.
+var PRICES = { 'claude-sonnet-5': [2, 10], 'claude-opus-5': [5, 25] };
+
+function addCost(p, result, batch) {
+  var u = result && result.type === 'succeeded' && result.message && result.message.usage;
+  if (!u) return;
+  var price = PRICES[readSettings().model] || PRICES['claude-sonnet-5'];
+  var tokens = (u.input_tokens || 0) + 1.25 * (u.cache_creation_input_tokens || 0) + 0.1 * (u.cache_read_input_tokens || 0);
+  var usd = (tokens * price[0] + (u.output_tokens || 0) * price[1]) / 1e6 * (batch ? 0.5 : 1);
+  usd += ((u.server_tool_use && u.server_tool_use.web_search_requests) || 0) * 0.01;
+  p.cost = (p.cost || 0) + usd;
+  var props = PropertiesService.getUserProperties();
+  props.setProperty('RUN_COST', String((parseFloat(props.getProperty('RUN_COST') || '0') || 0) + usd));
+}
+
+// A new run: the cost counter and the "run folder" button start over.
+function startNewRun() {
+  var props = PropertiesService.getUserProperties();
+  props.setProperty('RUN_COST', '0');
+  props.deleteProperty('RUN_FOLDER');
 }
 
 // Images go to the product's "תמונות" subfolder, named STEM-001.jpg ... in Claude's order of preference.
@@ -687,6 +779,7 @@ function pollBatches(settings) {
       if (!p || p.batchId !== b.id) return;
       try {
         delete p.batchId;
+        addCost(p, byId[p.id], true);
         if (b.kind === 'research') applyResearch(p, byId[p.id]);
         else applyWrite(p, byId[p.id]);
         saveState(p, m);

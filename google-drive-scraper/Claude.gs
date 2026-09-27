@@ -16,7 +16,7 @@ function claudeRequest(settings, method, path, body) {
   if (code >= 400) {
     var msg = text;
     try { msg = JSON.parse(text).error.message; } catch (e) {}
-    var err = new Error('Claude API ' + code + ': ' + msg + (code === 401 ? ' (מפתח ה-API לא תקין - סורק מוצרים ← הגדרת מפתח API)' : ''));
+    var err = new Error('Claude API ' + code + ': ' + msg + (code === 401 ? ' (מפתח ה-API לא תקין - מחליפים אותו בהגדרות)' : ''));
     err.status = code;
     throw err;
   }
@@ -46,7 +46,7 @@ function claudeNow(settings, paramsList) {
     try { body = JSON.parse(text); } catch (e) {}
     if (code < 400 && body) return { result: { type: 'succeeded', message: body } };
     var msg = 'Claude API ' + code + ': ' + ((body && body.error && body.error.message) || String(text).slice(0, 200)) +
-      (code === 401 ? ' (מפתח ה-API לא תקין - סורק מוצרים ← הגדרת מפתח API)' : '');
+      (code === 401 ? ' (מפתח ה-API לא תקין - מחליפים אותו בהגדרות)' : '');
     return { status: code, message: msg, result: { type: 'errored', error: { error: { message: msg } } } };
   });
 }
@@ -182,7 +182,14 @@ function writeParams(settings, p, styleExamples, brochureBase64, feedback) {
     '<videos>\n' + off.videos.map(function (v, i) { return i + '\t' + v.url + '\t' + (v.title || ''); }).join('\n') + '\n</videos>';
   var content = [];
   if (brochureBase64) content.push({ type: 'document', title: 'Official brochure', source: { type: 'base64', media_type: 'application/pdf', data: brochureBase64 } });
-  content.push({ type: 'text', text: '<sources>\n' + sources + '\n</sources>\n\n' + lists + '\n\nכתוב/י את דף המוצר ובחר/י את התמונות, הקבצים והסרטונים.' + (feedback || '') });
+  var ask = 'כתוב/י את דף המוצר ובחר/י את התמונות, הקבצים והסרטונים.';
+  if (p.revision) {   // the user asked to fix a finished product
+    ask = '<previous_version>\n' + JSON.stringify(p.revision.previous) + '\n</previous_version>\n\n' +
+      '<requested_changes>\n' + p.revision.note + '\n</requested_changes>\n\n' +
+      'זו גרסה שכבר נכתבה למוצר. עדכן/י אותה לפי הבקשה, ושמור/י על כל השאר כמו שהוא (גם על בחירת התמונות, הקבצים והסרטונים, אלא אם הבקשה היא לשנות אותם). ' +
+      'גם בתיקון כותבים רק עובדות שמופיעות במקורות. אם הבקשה דורשת עובדה שלא מופיעה במקורות, לא ממציאים אותה.';
+  }
+  content.push({ type: 'text', text: '<sources>\n' + sources + '\n</sources>\n\n' + lists + '\n\n' + ask + (feedback || '') });
   return {
     model: settings.model,
     max_tokens: 16000,

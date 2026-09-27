@@ -44,6 +44,9 @@ export function loadProject(fetchHandler, { apiKey = "sk-test", fast = FAST } = 
   return p;
 }
 
+// Every fake answer costs this much: 100,000 input tokens, 5,000 output tokens, 2 web searches.
+export const USAGE = { input_tokens: 100000, output_tokens: 5000, server_tool_use: { web_search_requests: 2 } };
+
 // A tiny fake Claude Batches API. `answer(params, req)` returns {content, stop_reason} or {error}.
 export function fakeClaude(answer, { key = "sk-test", pollsUntilEnded = 1, failCreate = null } = {}) {
   const batches = new Map();
@@ -61,7 +64,7 @@ export function fakeClaude(answer, { key = "sk-test", pollsUntilEnded = 1, failC
       if (a.timeout) return { timeout: true };
       if (a.status) return { code: a.status, body: { type: "error", error: { message: a.error || "error" } }, type: "application/json" };
       if (a.error) return { code: 400, body: { type: "error", error: { type: "invalid_request_error", message: a.error } }, type: "application/json" };
-      return { body: { type: "message", role: "assistant", content: a.content, stop_reason: a.stop_reason || "end_turn" }, type: "application/json" };
+      return { body: { type: "message", role: "assistant", content: a.content, stop_reason: a.stop_reason || "end_turn", usage: a.usage || USAGE }, type: "application/json" };
     }
     if (opts.method === "post" && u.pathname === "/v1/messages/batches") {
       creates++;
@@ -87,7 +90,7 @@ export function fakeClaude(answer, { key = "sk-test", pollsUntilEnded = 1, failC
         const a = answer(req.params, req);
         const result = a.error ? { type: "errored", error: { type: "error", error: { type: "invalid_request_error", message: a.error } } }
           : a.expired ? { type: "expired" }
-          : { type: "succeeded", message: { type: "message", role: "assistant", content: a.content, stop_reason: a.stop_reason || "end_turn" } };
+          : { type: "succeeded", message: { type: "message", role: "assistant", content: a.content, stop_reason: a.stop_reason || "end_turn", usage: a.usage || USAGE } };
         return JSON.stringify({ custom_id: req.custom_id, result });
       });
       return { body: lines.join("\n"), type: "application/x-jsonlines" };

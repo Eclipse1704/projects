@@ -450,7 +450,7 @@ function claudeRequest(settings, method, path, body) {
   if (code >= 400) {
     var msg = text;
     try { msg = JSON.parse(text).error.message; } catch (e) {}
-    var err = new Error('Claude API ' + code + ': ' + msg + (code === 401 ? ' (מפתח ה-API לא תקין - סורק מוצרים ← הגדרת מפתח API)' : ''));
+    var err = new Error('Claude API ' + code + ': ' + msg + (code === 401 ? ' (מפתח ה-API לא תקין - מחליפים אותו בהגדרות)' : ''));
     err.status = code;
     throw err;
   }
@@ -480,7 +480,7 @@ function claudeNow(settings, paramsList) {
     try { body = JSON.parse(text); } catch (e) {}
     if (code < 400 && body) return { result: { type: 'succeeded', message: body } };
     var msg = 'Claude API ' + code + ': ' + ((body && body.error && body.error.message) || String(text).slice(0, 200)) +
-      (code === 401 ? ' (מפתח ה-API לא תקין - סורק מוצרים ← הגדרת מפתח API)' : '');
+      (code === 401 ? ' (מפתח ה-API לא תקין - מחליפים אותו בהגדרות)' : '');
     return { status: code, message: msg, result: { type: 'errored', error: { error: { message: msg } } } };
   });
 }
@@ -616,7 +616,14 @@ function writeParams(settings, p, styleExamples, brochureBase64, feedback) {
     '<videos>\n' + off.videos.map(function (v, i) { return i + '\t' + v.url + '\t' + (v.title || ''); }).join('\n') + '\n</videos>';
   var content = [];
   if (brochureBase64) content.push({ type: 'document', title: 'Official brochure', source: { type: 'base64', media_type: 'application/pdf', data: brochureBase64 } });
-  content.push({ type: 'text', text: '<sources>\n' + sources + '\n</sources>\n\n' + lists + '\n\nכתוב/י את דף המוצר ובחר/י את התמונות, הקבצים והסרטונים.' + (feedback || '') });
+  var ask = 'כתוב/י את דף המוצר ובחר/י את התמונות, הקבצים והסרטונים.';
+  if (p.revision) {   // the user asked to fix a finished product
+    ask = '<previous_version>\n' + JSON.stringify(p.revision.previous) + '\n</previous_version>\n\n' +
+      '<requested_changes>\n' + p.revision.note + '\n</requested_changes>\n\n' +
+      'זו גרסה שכבר נכתבה למוצר. עדכן/י אותה לפי הבקשה, ושמור/י על כל השאר כמו שהוא (גם על בחירת התמונות, הקבצים והסרטונים, אלא אם הבקשה היא לשנות אותם). ' +
+      'גם בתיקון כותבים רק עובדות שמופיעות במקורות. אם הבקשה דורשת עובדה שלא מופיעה במקורות, לא ממציאים אותה.';
+  }
+  content.push({ type: 'text', text: '<sources>\n' + sources + '\n</sources>\n\n' + lists + '\n\n' + ask + (feedback || '') });
   return {
     model: settings.model,
     max_tokens: 16000,
@@ -845,8 +852,8 @@ function updateAllProductsCsv(root, row) {
   rows = rows.filter(function (r) { return r[0] !== row[0]; });
   rows.push(row);
   var content = toCsv([CSV_HEADERS].concat(rows));
-  if (file) file.setContent(content);
-  else root.createFile(Utilities.newBlob(content, 'text/csv', ALL_PRODUCTS_CSV));
+  if (file) return file.setContent(content);
+  return root.createFile(Utilities.newBlob(content, 'text/csv', ALL_PRODUCTS_CSV));
 }
 
 // ======================================== Main.gs ========================================
@@ -898,6 +905,7 @@ function queueLinks(links) {
   try {
     var list = getItems();
     var stages = getStages();
+    if (!Object.keys(stages).length) startNewRun();
     var stamp = Date.now().toString(36);
     links.forEach(function (link, i) {
       var id = 'p' + stamp + 'n' + i;
@@ -1032,7 +1040,7 @@ function setRowStatus(id, status, extra) {
   if (!it) return;
   it.status = status;
   extra = extra || {};
-  ['name', 'manufacturer', 'folderUrl', 'notes'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
+  ['name', 'manufacturer', 'folderUrl', 'notes', 'cost', 'dataId'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
   ITEMS_DIRTY = true;
 }
 
@@ -1202,6 +1210,7 @@ function runClaudeNow(settings, kind) {
         return;
       }
       try {
+        addCost(p, a.result, false);
         if (kind === 'research') applyResearch(p, a.result);
         else applyWrite(p, a.result);
         saveState(p, m);
@@ -1329,14 +1338,25 @@ function stepSave(settings, p) {
   var stem = fileStem(p.research.manufacturer, p.research.model || (p.supplier && p.supplier.title) || '');
   // Without a known manufacturer/model the name isn't unique: add the product's id.
   if (!p.research.manufacturer || !p.research.model) stem += '-' + p.id.toUpperCase();
-  var root = rootFolder(settings);
+  var root = null;
   var folder = null;
-  var it = root.getFolders();   // re-running a product updates its existing folder
-  while (it.hasNext() && !folder) {
-    var f = it.next();
-    if (!f.isTrashed() && (f.getName() === stem || f.getName().indexOf(stem + ' - ') === 0)) folder = f;
+  if (p.folderId) {   // a text fix: save into the product's folder, even if the main folder setting changed since
+    try {
+      folder = DriveApp.getFolderById(p.folderId);
+      var parents = folder.getParents();
+      root = !folder.isTrashed() && parents.hasNext() ? parents.next() : null;
+    } catch (e) {}
+    if (!root) folder = null;
   }
-  folder = folder || root.createFolder(stem);
+  if (!folder) {
+    root = rootFolder(settings);
+    var it = root.getFolders();   // re-running a product updates its existing folder
+    while (it.hasNext() && !folder) {
+      var f = it.next();
+      if (!f.isTrashed() && (f.getName() === stem || f.getName().indexOf(stem + ' - ') === 0)) folder = f;
+    }
+    folder = folder || root.createFolder(stem);
+  }
 
   var saved = { images: [], docs: [], videos: [] };
   saved.images = saveImages(folder, stem, uniqueIndexes(c.image_indexes, off.images.length).map(function (i) { return off.images[i]; }));
@@ -1369,14 +1389,93 @@ function stepSave(settings, p) {
   });
   var row = productRow(p, stem, folder.getUrl());
   replaceFile(folder, stem + '.csv', csvBlob([CSV_HEADERS, row], stem + '.csv'));
-  updateAllProductsCsv(root, row);
+  var table = updateAllProductsCsv(root, row);
   folder.setName(stem + ' - ' + c.name);
+  PropertiesService.getUserProperties().setProperty('RUN_FOLDER', JSON.stringify({ name: root.getName(), url: root.getUrl(), tableUrl: table.getUrl() }));
 
   p.stage = 'done';
   p.folderUrl = folder.getUrl();
+  p.folderId = folder.getId();
+  p.revision = null;
+  var dataId = saveProductData(p);
   setRowStatus(p.id, p.warnings.length ? STATUS.doneNotes : STATUS.done, {
     name: c.name, manufacturer: p.research.manufacturer, folderUrl: p.folderUrl, notes: p.warnings.join(' · '),
+    cost: (p.cost || 0).toFixed(2), dataId: dataId,
   });
+}
+
+// ---------------- Fixing a finished product's text ----------------
+
+var DATA_FOLDER = '_סורק מוצרים - נתונים (לא למחוק)';
+
+// Everything Claude needs to rewrite a product later, kept outside the product folders.
+function saveProductData(p) {
+  try {
+    var folder = firstLive(DriveApp.getFoldersByName(DATA_FOLDER)) || DriveApp.createFolder(DATA_FOLDER);
+    var json = JSON.stringify(p);
+    var file = firstLive(folder.getFilesByName(p.id + '.json'));
+    if (file) file.setContent(json);
+    else file = folder.createFile(p.id + '.json', json, 'application/json');
+    return file.getId();
+  } catch (e) {
+    console.warn('product data not saved: ' + e.message);
+    return '';
+  }
+}
+
+// Sends a finished product back to Claude with the user's request; the save step then updates its folder and tables.
+function reviseProduct(id, note) {
+  var lock = LockService.getUserLock();
+  lock.waitLock(60000);
+  try {
+    var it = getItems().filter(function (x) { return x.id === id; })[0];
+    if (!it || !it.dataId) return 'אי אפשר לתקן את המוצר הזה. סורקים אותו מחדש.';
+    var stages = getStages();
+    if (stages[id]) return 'המוצר עדיין בעבודה.';
+    var p;
+    try { p = JSON.parse(DriveApp.getFileById(it.dataId).getBlob().getDataAsString('UTF-8')); } catch (e) { return 'לא מצאתי את הנתונים של המוצר. סורקים אותו מחדש.'; }
+    if (!Object.keys(stages).length) startNewRun();
+    p.revision = { note: note, previous: p.content };
+    p.stage = 'write_pending';
+    p.writeAttempts = 0;
+    p.stepTries = {};
+    p.nowErrors = 0;
+    p.useBatch = null;
+    p.cost = 0;
+    delete p.batchId;
+    saveState(p, stages);
+    setStages(stages);
+    setRowStatus(id, STATUS.write, { notes: '' });
+    flushItems();
+  } finally {
+    lock.releaseLock();
+  }
+  setTriggerEvery(1);
+  return '';
+}
+
+// ---------------- Cost ----------------
+
+// USD per million tokens (standard API prices); batch jobs cost half. Web search: $10 per 1,000 searches.
+var PRICES = { 'claude-sonnet-5': [2, 10], 'claude-opus-5': [5, 25] };
+
+function addCost(p, result, batch) {
+  var u = result && result.type === 'succeeded' && result.message && result.message.usage;
+  if (!u) return;
+  var price = PRICES[readSettings().model] || PRICES['claude-sonnet-5'];
+  var tokens = (u.input_tokens || 0) + 1.25 * (u.cache_creation_input_tokens || 0) + 0.1 * (u.cache_read_input_tokens || 0);
+  var usd = (tokens * price[0] + (u.output_tokens || 0) * price[1]) / 1e6 * (batch ? 0.5 : 1);
+  usd += ((u.server_tool_use && u.server_tool_use.web_search_requests) || 0) * 0.01;
+  p.cost = (p.cost || 0) + usd;
+  var props = PropertiesService.getUserProperties();
+  props.setProperty('RUN_COST', String((parseFloat(props.getProperty('RUN_COST') || '0') || 0) + usd));
+}
+
+// A new run: the cost counter and the "run folder" button start over.
+function startNewRun() {
+  var props = PropertiesService.getUserProperties();
+  props.setProperty('RUN_COST', '0');
+  props.deleteProperty('RUN_FOLDER');
 }
 
 // Images go to the product's "תמונות" subfolder, named STEM-001.jpg ... in Claude's order of preference.
@@ -1539,6 +1638,7 @@ function pollBatches(settings) {
       if (!p || p.batchId !== b.id) return;
       try {
         delete p.batchId;
+        addCost(p, byId[p.id], true);
         if (b.kind === 'research') applyResearch(p, byId[p.id]);
         else applyWrite(p, byId[p.id]);
         saveState(p, m);
@@ -1699,9 +1799,26 @@ function appState() {
   var items = getItems().slice(-60).reverse().map(function (it) {
     var status = String(it.status || '');
     var step = steps().filter(function (s) { return status.indexOf(s[0]) === 0; })[0] || ['', status || 'עוד לא התחיל', 0, status ? 'working' : 'idle'];
-    return { link: it.link, name: it.name, manufacturer: it.manufacturer, step: step[1], pct: step[2], state: step[3], folderUrl: it.folderUrl, notes: it.notes };
+    return {
+      id: it.id, link: it.link, name: it.name, manufacturer: it.manufacturer, step: step[1], pct: step[2], state: step[3],
+      folderUrl: it.folderUrl, notes: it.notes, cost: it.cost || '', canFix: !!it.dataId,
+    };
   });
-  return { hasKey: !!readSettings().apiKey, items: items, worker: workerStatus() };
+  var props = PropertiesService.getUserProperties();
+  var runFolder = null;
+  try { runFolder = JSON.parse(props.getProperty('RUN_FOLDER') || 'null'); } catch (e) {}
+  var runCost = parseFloat(props.getProperty('RUN_COST') || '0') || 0;
+  return { hasKey: !!readSettings().apiKey, items: items, worker: workerStatus(), runFolder: runFolder, runCost: runCost.toFixed(2) };
+}
+
+// "Fix the text" on a finished product: Claude rewrites it by the user's note, the folder and tables are updated.
+function appRevise(id, note) {
+  ensureOwnCopy();
+  note = String(note || '').trim();
+  if (!note) return { ok: false, message: 'כותבים מה לתקן.' };
+  if (!readSettings().apiKey) return { ok: false, message: 'חסר מפתח API.' };
+  var err = reviseProduct(String(id), note.slice(0, 2000));
+  return err ? { ok: false, message: err } : { ok: true, message: 'Claude מתקן את הטקסט. זה לוקח כמה דקות.', state: appState() };
 }
 
 function appStart(text) {
@@ -1855,6 +1972,21 @@ var APP_HTML = `<!doctype html>
     font:500 13px "Heebo", Arial, sans-serif; display:inline-flex; align-items:center; gap:6px; transition:border-color .15s, background .15s; }
   .tab:hover { border-color:#fff; background:rgba(255,255,255,.08); }
   .tab svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; }
+  .run { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .run:empty { display:none; }
+  .run a { display:inline-flex; align-items:center; gap:6px; text-decoration:none; font-weight:700; font-size:13px; color:#fff; background:var(--ink);
+    border-radius:8px; padding:7px 12px; transition:background .15s; }
+  .run a:hover { background:#000; }
+  .run a svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; }
+  .run .cost { font-size:12.5px; color:var(--ink-2); margin-inline-start:auto; font-variant-numeric:tabular-nums; }
+  .btns { display:flex; gap:8px; flex:none; }
+  .fixbtn { white-space:nowrap; display:inline-flex; align-items:center; gap:5px; font:500 13px "Heebo", Arial, sans-serif; color:var(--ink-2);
+    background:none; border:1.5px solid var(--line); border-radius:8px; padding:6px 10px; cursor:pointer; }
+  .fixbtn:hover { border-color:var(--ink); color:var(--ink); }
+  .fix { display:grid; gap:8px; }
+  .fix textarea { direction:rtl; text-align:right; font-family:"Heebo", Arial, sans-serif; min-height:64px; }
+  .fix .row button { flex:none; width:auto; padding:9px 16px; }
+  .icost { font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .worker { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; padding:0 2px; }
   .worker:empty { display:none; }
   .worker b { width:8px; height:8px; border-radius:50%; background:var(--ok); display:inline-block; flex:none; }
@@ -1901,6 +2033,7 @@ var APP_HTML = `<!doctype html>
       <p id="msg" class="msg" role="status"></p>
     </section>
 
+    <div id="run" class="run"></div>
     <div id="worker" class="worker"></div>
     <div id="summary" class="summary"></div>
     <div id="list" class="list" aria-live="polite"></div>
@@ -2006,6 +2139,7 @@ var APP_HTML = `<!doctype html>
   }
 
   function render(state) {
+    last = state;
     $('keyCard').hidden = state.hasKey;
     var w = state.worker || {};
     $('worker').className = 'worker' + (w.lastError ? ' bad' : '');
@@ -2027,20 +2161,33 @@ var APP_HTML = `<!doctype html>
             '<div class="meta" title="' + esc(it.link) + '">' + esc(it.manufacturer ? it.manufacturer + ' · ' + shortLink(it.link) : shortLink(it.link)) + '</div>' +
           '</div></div>' +
           (it.state === 'working' || it.state === 'done' || it.state === 'warn' ? stepsHtml(it) : '') +
-          '<div class="actions"><span class="state">' + esc(it.step) + '</span>' +
+          '<div class="actions"><span class="state">' + esc(it.step) + (it.cost && (it.state === 'done' || it.state === 'warn') ? ' <span class="icost">· כ-' + esc(it.cost) + '$</span>' : '') + '</span>' +
+            '<span class="btns">' +
+            (it.canFix && (it.state === 'done' || it.state === 'warn') ? '<button class="fixbtn" type="button" data-fix="' + esc(it.id) + '">✏️ תקן טקסט</button>' : '') +
             (it.folderUrl ? '<a class="open" href="' + esc(it.folderUrl) + '" target="_blank" rel="noopener">' + FOLDER_ICON + 'פתח תיקייה</a>' : '') +
-          '</div>' +
+          '</span></div>' +
+          (fixOpen[it.id] ? '<div class="fix" data-box="' + esc(it.id) + '"><textarea placeholder="מה לתקן? למשל: לקצר את התיאור הקצר, להדגיש את העמידות למים, לכתוב מצלמה תרמית ולא מצלמת חום">' + esc(fixOpen[it.id].text) + '</textarea>' +
+            '<div class="row"><button class="primary" type="button" data-send="' + esc(it.id) + '">שלח לתיקון</button><button class="ghost" type="button" data-cancel="' + esc(it.id) + '">ביטול</button></div>' +
+            '<p class="msg' + (fixOpen[it.id].bad ? ' bad' : ' good') + '">' + esc(fixOpen[it.id].msg || '') + '</p></div>' : '') +
           (it.notes ? '<details><summary>' + (it.state === 'error' ? 'מה קרה?' : 'מה חסר?') + '</summary>' + esc(it.notes) + '</details>' : '') +
           '</article>';
       }).join('');
     }
+    var rf = state.runFolder;
+    var TABLE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg>';
+    $('run').innerHTML = (rf ? '<a href="' + esc(rf.url) + '" target="_blank" rel="noopener">' + FOLDER_ICON + 'תיקיית ההרצה: ' + esc(rf.name) + '</a>' +
+        (rf.tableUrl ? '<a href="' + esc(rf.tableUrl) + '" target="_blank" rel="noopener">' + TABLE_ICON + 'טבלת כל המוצרים</a>' : '') : '') +
+      (items.length && +state.runCost > 0 ? '<span class="cost">עלות ההרצה עד עכשיו: כ-' + esc(state.runCost) + '$</span>' : '');
     $('stop').hidden = !n.working;
     $('clear').hidden = !(items.length - n.working);
     clearTimeout(timer);
     timer = setTimeout(refresh, n.working ? 5000 : 30000);
   }
 
+  var fixOpen = {};   // product id -> {text, msg, bad}: the "fix the text" boxes that are open
+  var last = null;
   function refresh() {
+    if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.fix')) { clearTimeout(timer); timer = setTimeout(refresh, 5000); return; }
     google.script.run.withSuccessHandler(render).withFailureHandler(function () { timer = setTimeout(refresh, 15000); }).appState();
   }
 
@@ -2056,7 +2203,36 @@ var APP_HTML = `<!doctype html>
       say($('msg'), r.message, r.ok);
       if (r.ok) $('links').value = '';
       if (r.needKey) $('keyCard').hidden = false;
-      $('clear').addEventListener('click', function () { google.script.run.withSuccessHandler(render).appClearFinished(); });
+      $('list').addEventListener('input', function (e) {
+    var box = e.target.closest('.fix');
+    if (box && fixOpen[box.getAttribute('data-box')]) fixOpen[box.getAttribute('data-box')].text = e.target.value;
+  });
+  $('list').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var id;
+    if ((id = b.getAttribute('data-fix'))) {
+      fixOpen[id] = fixOpen[id] ? null : { text: '' };
+      if (!fixOpen[id]) delete fixOpen[id];
+      render(last);
+      var t = document.querySelector('[data-box="' + id + '"] textarea');
+      if (t) t.focus();
+    } else if ((id = b.getAttribute('data-cancel'))) {
+      delete fixOpen[id]; render(last);
+    } else if ((id = b.getAttribute('data-send'))) {
+      var box = fixOpen[id];
+      if (!box || !box.text.trim()) { fixOpen[id] = { text: box ? box.text : '', msg: 'כותבים מה לתקן.', bad: true }; render(last); return; }
+      b.disabled = true;
+      google.script.run.withSuccessHandler(function (r) {
+        if (r.ok) { delete fixOpen[id]; say($('msg'), r.message, true); render(r.state); }
+        else { fixOpen[id].msg = r.message; fixOpen[id].bad = true; render(last); }
+      }).withFailureHandler(function (err) {
+        fixOpen[id].msg = 'משהו השתבש: ' + (err && err.message || err); fixOpen[id].bad = true; render(last);
+      }).appRevise(id, box.text);
+    }
+  });
+
+  $('clear').addEventListener('click', function () { google.script.run.withSuccessHandler(render).appClearFinished(); });
 
   // ---------- settings ----------
   var values = {};
@@ -2141,6 +2317,35 @@ var APP_HTML = `<!doctype html>
     google.script.run.withSuccessHandler(render).appStop();
   });
 
+
+  $('list').addEventListener('input', function (e) {
+    var box = e.target.closest('.fix');
+    if (box && fixOpen[box.getAttribute('data-box')]) fixOpen[box.getAttribute('data-box')].text = e.target.value;
+  });
+  $('list').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var id;
+    if ((id = b.getAttribute('data-fix'))) {
+      fixOpen[id] = fixOpen[id] ? null : { text: '' };
+      if (!fixOpen[id]) delete fixOpen[id];
+      render(last);
+      var t = document.querySelector('[data-box="' + id + '"] textarea');
+      if (t) t.focus();
+    } else if ((id = b.getAttribute('data-cancel'))) {
+      delete fixOpen[id]; render(last);
+    } else if ((id = b.getAttribute('data-send'))) {
+      var box = fixOpen[id];
+      if (!box || !box.text.trim()) { fixOpen[id] = { text: box ? box.text : '', msg: 'כותבים מה לתקן.', bad: true }; render(last); return; }
+      b.disabled = true;
+      google.script.run.withSuccessHandler(function (r) {
+        if (r.ok) { delete fixOpen[id]; say($('msg'), r.message, true); render(r.state); }
+        else { fixOpen[id].msg = r.message; fixOpen[id].bad = true; render(last); }
+      }).withFailureHandler(function (err) {
+        fixOpen[id].msg = 'משהו השתבש: ' + (err && err.message || err); fixOpen[id].bad = true; render(last);
+      }).appRevise(id, box.text);
+    }
+  });
 
   $('clear').addEventListener('click', function () { google.script.run.withSuccessHandler(render).appClearFinished(); });
 

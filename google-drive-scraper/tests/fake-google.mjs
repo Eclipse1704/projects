@@ -30,6 +30,7 @@ class DFile {
   setTrashed(t) { this.trashed = t; return this; }
   setContent(c) { this.blob = new Blob(c, this.blob.type, this.blob.name); return this; }
   getUrl() { return `https://drive.google.com/file/d/${this.id}/view`; }
+  moveTo(folder) { this.parent.files.splice(this.parent.files.indexOf(this), 1); folder.files.push(this); this.parent = folder; return this; }
 }
 
 class DFolder {
@@ -42,6 +43,7 @@ class DFolder {
   setTrashed(t) { this.trashed = t; return this; }
   // Like real DriveApp, these also return items that are in the trash.
   getFolders() { return iter(this.folders); }
+  getParents() { return iter(this.parent ? [this.parent] : []); }
   getFoldersByName(n) { return iter(this.folders.filter((f) => f.name === n)); }
   getFilesByName(n) { return iter(this.files.filter((f) => f.getName() === n)); }
   getFiles() { return iter(this.files); }
@@ -159,7 +161,14 @@ export function makeGoogle({ fetchHandler }) {
       getFileById: (id) => {
         const find = (f) => f.files.find((x) => x.id === id) || f.folders.map(find).find(Boolean);
         const file = find(myDrive);
-        return { moveTo: (folder) => { file.parent.files.splice(file.parent.files.indexOf(file), 1); folder.files.push(file); file.parent = folder; } };
+        if (!file) throw new Error("No item with the given ID could be found.");
+        return file;
+      },
+      getFolderById: (id) => {
+        const find = (f) => (f.id === id ? f : f.folders.map(find).find(Boolean));
+        const folder = find(myDrive);
+        if (!folder) throw new Error("No item with the given ID could be found.");
+        return folder;
       },
     },
     DocumentApp: {

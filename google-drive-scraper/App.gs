@@ -32,9 +32,26 @@ function appState() {
   var items = getItems().slice(-60).reverse().map(function (it) {
     var status = String(it.status || '');
     var step = steps().filter(function (s) { return status.indexOf(s[0]) === 0; })[0] || ['', status || 'עוד לא התחיל', 0, status ? 'working' : 'idle'];
-    return { link: it.link, name: it.name, manufacturer: it.manufacturer, step: step[1], pct: step[2], state: step[3], folderUrl: it.folderUrl, notes: it.notes };
+    return {
+      id: it.id, link: it.link, name: it.name, manufacturer: it.manufacturer, step: step[1], pct: step[2], state: step[3],
+      folderUrl: it.folderUrl, notes: it.notes, cost: it.cost || '', canFix: !!it.dataId,
+    };
   });
-  return { hasKey: !!readSettings().apiKey, items: items, worker: workerStatus() };
+  var props = PropertiesService.getUserProperties();
+  var runFolder = null;
+  try { runFolder = JSON.parse(props.getProperty('RUN_FOLDER') || 'null'); } catch (e) {}
+  var runCost = parseFloat(props.getProperty('RUN_COST') || '0') || 0;
+  return { hasKey: !!readSettings().apiKey, items: items, worker: workerStatus(), runFolder: runFolder, runCost: runCost.toFixed(2) };
+}
+
+// "Fix the text" on a finished product: Claude rewrites it by the user's note, the folder and tables are updated.
+function appRevise(id, note) {
+  ensureOwnCopy();
+  note = String(note || '').trim();
+  if (!note) return { ok: false, message: 'כותבים מה לתקן.' };
+  if (!readSettings().apiKey) return { ok: false, message: 'חסר מפתח API.' };
+  var err = reviseProduct(String(id), note.slice(0, 2000));
+  return err ? { ok: false, message: err } : { ok: true, message: 'Claude מתקן את הטקסט. זה לוקח כמה דקות.', state: appState() };
 }
 
 function appStart(text) {
@@ -188,6 +205,21 @@ var APP_HTML = `<!doctype html>
     font:500 13px "Heebo", Arial, sans-serif; display:inline-flex; align-items:center; gap:6px; transition:border-color .15s, background .15s; }
   .tab:hover { border-color:#fff; background:rgba(255,255,255,.08); }
   .tab svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; }
+  .run { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .run:empty { display:none; }
+  .run a { display:inline-flex; align-items:center; gap:6px; text-decoration:none; font-weight:700; font-size:13px; color:#fff; background:var(--ink);
+    border-radius:8px; padding:7px 12px; transition:background .15s; }
+  .run a:hover { background:#000; }
+  .run a svg { width:14px; height:14px; fill:none; stroke:currentColor; stroke-width:2; }
+  .run .cost { font-size:12.5px; color:var(--ink-2); margin-inline-start:auto; font-variant-numeric:tabular-nums; }
+  .btns { display:flex; gap:8px; flex:none; }
+  .fixbtn { white-space:nowrap; display:inline-flex; align-items:center; gap:5px; font:500 13px "Heebo", Arial, sans-serif; color:var(--ink-2);
+    background:none; border:1.5px solid var(--line); border-radius:8px; padding:6px 10px; cursor:pointer; }
+  .fixbtn:hover { border-color:var(--ink); color:var(--ink); }
+  .fix { display:grid; gap:8px; }
+  .fix textarea { direction:rtl; text-align:right; font-family:"Heebo", Arial, sans-serif; min-height:64px; }
+  .fix .row button { flex:none; width:auto; padding:9px 16px; }
+  .icost { font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums; }
   .worker { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; padding:0 2px; }
   .worker:empty { display:none; }
   .worker b { width:8px; height:8px; border-radius:50%; background:var(--ok); display:inline-block; flex:none; }
@@ -234,6 +266,7 @@ var APP_HTML = `<!doctype html>
       <p id="msg" class="msg" role="status"></p>
     </section>
 
+    <div id="run" class="run"></div>
     <div id="worker" class="worker"></div>
     <div id="summary" class="summary"></div>
     <div id="list" class="list" aria-live="polite"></div>
@@ -339,6 +372,7 @@ var APP_HTML = `<!doctype html>
   }
 
   function render(state) {
+    last = state;
     $('keyCard').hidden = state.hasKey;
     var w = state.worker || {};
     $('worker').className = 'worker' + (w.lastError ? ' bad' : '');
@@ -360,20 +394,33 @@ var APP_HTML = `<!doctype html>
             '<div class="meta" title="' + esc(it.link) + '">' + esc(it.manufacturer ? it.manufacturer + ' · ' + shortLink(it.link) : shortLink(it.link)) + '</div>' +
           '</div></div>' +
           (it.state === 'working' || it.state === 'done' || it.state === 'warn' ? stepsHtml(it) : '') +
-          '<div class="actions"><span class="state">' + esc(it.step) + '</span>' +
+          '<div class="actions"><span class="state">' + esc(it.step) + (it.cost && (it.state === 'done' || it.state === 'warn') ? ' <span class="icost">· כ-' + esc(it.cost) + '$</span>' : '') + '</span>' +
+            '<span class="btns">' +
+            (it.canFix && (it.state === 'done' || it.state === 'warn') ? '<button class="fixbtn" type="button" data-fix="' + esc(it.id) + '">✏️ תקן טקסט</button>' : '') +
             (it.folderUrl ? '<a class="open" href="' + esc(it.folderUrl) + '" target="_blank" rel="noopener">' + FOLDER_ICON + 'פתח תיקייה</a>' : '') +
-          '</div>' +
+          '</span></div>' +
+          (fixOpen[it.id] ? '<div class="fix" data-box="' + esc(it.id) + '"><textarea placeholder="מה לתקן? למשל: לקצר את התיאור הקצר, להדגיש את העמידות למים, לכתוב מצלמה תרמית ולא מצלמת חום">' + esc(fixOpen[it.id].text) + '</textarea>' +
+            '<div class="row"><button class="primary" type="button" data-send="' + esc(it.id) + '">שלח לתיקון</button><button class="ghost" type="button" data-cancel="' + esc(it.id) + '">ביטול</button></div>' +
+            '<p class="msg' + (fixOpen[it.id].bad ? ' bad' : ' good') + '">' + esc(fixOpen[it.id].msg || '') + '</p></div>' : '') +
           (it.notes ? '<details><summary>' + (it.state === 'error' ? 'מה קרה?' : 'מה חסר?') + '</summary>' + esc(it.notes) + '</details>' : '') +
           '</article>';
       }).join('');
     }
+    var rf = state.runFolder;
+    var TABLE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></svg>';
+    $('run').innerHTML = (rf ? '<a href="' + esc(rf.url) + '" target="_blank" rel="noopener">' + FOLDER_ICON + 'תיקיית ההרצה: ' + esc(rf.name) + '</a>' +
+        (rf.tableUrl ? '<a href="' + esc(rf.tableUrl) + '" target="_blank" rel="noopener">' + TABLE_ICON + 'טבלת כל המוצרים</a>' : '') : '') +
+      (items.length && +state.runCost > 0 ? '<span class="cost">עלות ההרצה עד עכשיו: כ-' + esc(state.runCost) + '$</span>' : '');
     $('stop').hidden = !n.working;
     $('clear').hidden = !(items.length - n.working);
     clearTimeout(timer);
     timer = setTimeout(refresh, n.working ? 5000 : 30000);
   }
 
+  var fixOpen = {};   // product id -> {text, msg, bad}: the "fix the text" boxes that are open
+  var last = null;
   function refresh() {
+    if (document.activeElement && document.activeElement.closest && document.activeElement.closest('.fix')) { clearTimeout(timer); timer = setTimeout(refresh, 5000); return; }
     google.script.run.withSuccessHandler(render).withFailureHandler(function () { timer = setTimeout(refresh, 15000); }).appState();
   }
 
@@ -389,7 +436,36 @@ var APP_HTML = `<!doctype html>
       say($('msg'), r.message, r.ok);
       if (r.ok) $('links').value = '';
       if (r.needKey) $('keyCard').hidden = false;
-      $('clear').addEventListener('click', function () { google.script.run.withSuccessHandler(render).appClearFinished(); });
+      $('list').addEventListener('input', function (e) {
+    var box = e.target.closest('.fix');
+    if (box && fixOpen[box.getAttribute('data-box')]) fixOpen[box.getAttribute('data-box')].text = e.target.value;
+  });
+  $('list').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var id;
+    if ((id = b.getAttribute('data-fix'))) {
+      fixOpen[id] = fixOpen[id] ? null : { text: '' };
+      if (!fixOpen[id]) delete fixOpen[id];
+      render(last);
+      var t = document.querySelector('[data-box="' + id + '"] textarea');
+      if (t) t.focus();
+    } else if ((id = b.getAttribute('data-cancel'))) {
+      delete fixOpen[id]; render(last);
+    } else if ((id = b.getAttribute('data-send'))) {
+      var box = fixOpen[id];
+      if (!box || !box.text.trim()) { fixOpen[id] = { text: box ? box.text : '', msg: 'כותבים מה לתקן.', bad: true }; render(last); return; }
+      b.disabled = true;
+      google.script.run.withSuccessHandler(function (r) {
+        if (r.ok) { delete fixOpen[id]; say($('msg'), r.message, true); render(r.state); }
+        else { fixOpen[id].msg = r.message; fixOpen[id].bad = true; render(last); }
+      }).withFailureHandler(function (err) {
+        fixOpen[id].msg = 'משהו השתבש: ' + (err && err.message || err); fixOpen[id].bad = true; render(last);
+      }).appRevise(id, box.text);
+    }
+  });
+
+  $('clear').addEventListener('click', function () { google.script.run.withSuccessHandler(render).appClearFinished(); });
 
   // ---------- settings ----------
   var values = {};
@@ -474,6 +550,35 @@ var APP_HTML = `<!doctype html>
     google.script.run.withSuccessHandler(render).appStop();
   });
 
+
+  $('list').addEventListener('input', function (e) {
+    var box = e.target.closest('.fix');
+    if (box && fixOpen[box.getAttribute('data-box')]) fixOpen[box.getAttribute('data-box')].text = e.target.value;
+  });
+  $('list').addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (!b) return;
+    var id;
+    if ((id = b.getAttribute('data-fix'))) {
+      fixOpen[id] = fixOpen[id] ? null : { text: '' };
+      if (!fixOpen[id]) delete fixOpen[id];
+      render(last);
+      var t = document.querySelector('[data-box="' + id + '"] textarea');
+      if (t) t.focus();
+    } else if ((id = b.getAttribute('data-cancel'))) {
+      delete fixOpen[id]; render(last);
+    } else if ((id = b.getAttribute('data-send'))) {
+      var box = fixOpen[id];
+      if (!box || !box.text.trim()) { fixOpen[id] = { text: box ? box.text : '', msg: 'כותבים מה לתקן.', bad: true }; render(last); return; }
+      b.disabled = true;
+      google.script.run.withSuccessHandler(function (r) {
+        if (r.ok) { delete fixOpen[id]; say($('msg'), r.message, true); render(r.state); }
+        else { fixOpen[id].msg = r.message; fixOpen[id].bad = true; render(last); }
+      }).withFailureHandler(function (err) {
+        fixOpen[id].msg = 'משהו השתבש: ' + (err && err.message || err); fixOpen[id].bad = true; render(last);
+      }).appRevise(id, box.text);
+    }
+  });
 
   $('clear').addEventListener('click', function () { google.script.run.withSuccessHandler(render).appClearFinished(); });
 

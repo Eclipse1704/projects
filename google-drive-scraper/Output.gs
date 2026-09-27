@@ -190,6 +190,6 @@ function updateAllProductsCsv(root, row) {
   rows = rows.filter(function (r) { return r[0] !== row[0]; });
   rows.push(row);
   var content = toCsv([CSV_HEADERS].concat(rows));
-  if (file) file.setContent(content);
-  else root.createFile(Utilities.newBlob(content, 'text/csv', ALL_PRODUCTS_CSV));
+  if (file) return file.setContent(content);
+  return root.createFile(Utilities.newBlob(content, 'text/csv', ALL_PRODUCTS_CSV));
 }
