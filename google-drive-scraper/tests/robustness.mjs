@@ -1,6 +1,7 @@
 // Failure modes and edge cases. Run: node tests/robustness.mjs
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { FAST, fakeClaude, hebrew, loadProject, researchJson, text } from "./harness.mjs";
 
 const results = [];
@@ -370,6 +371,46 @@ test("Hebrew quality: a word from 'words we don't use' sends the text back to Cl
   // Hebrew word boundaries: "הינו" inside another word is fine
   assert.equal(p.ctx.containsWord("בהינותו", "הינו"), false);
   assert.equal(p.ctx.containsWord("המכשיר הינו טוב", "הינו"), true);
+});
+
+// ---------- installation ----------
+
+test("'make a copy' of a sheet: the copy doesn't get the original's API key or work queue", () => {
+  const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
+  const p = loadProject(web(claude), batchOnly);
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.run("tick");
+  assert.ok(p.g.scriptProps.getProperty("ANTHROPIC_API_KEY"));
+  p.g.sheetId.value = "sheet-2";   // the copy has a different id; Google copies the script and its properties
+  p.run("onOpen");
+  assert.equal(p.g.scriptProps.getProperty("ANTHROPIC_API_KEY"), null, "API key copied to the copy");
+  assert.equal(p.ctx.getBatches().length, 0);
+  assert.equal(Object.keys(p.ctx.getStages()).length, 0);
+});
+
+test("fresh install: opening the sheet creates the products, settings and instructions sheets", () => {
+  const p = loadProject(() => null);
+  p.g.sheets.clear();
+  p.run("onOpen");
+  assert.deepEqual([...p.g.sheets.keys()].sort(), ["הגדרות", "הוראות", "מוצרים"].sort());
+  assert.match(String(p.g.sheets.get("הוראות").get(2, 1)), /מדביקים קישורים/);
+});
+
+test("no advanced services needed (install = paste one file); the readable Google Doc is built with DocumentApp", () => {
+  const code = ["Main.gs", "Claude.gs", "Output.gs", "Extract.gs", "Settings.gs"].map((f) => readFileSync(new URL("../" + f, import.meta.url), "utf8")).join("\n");
+  assert.doesNotMatch(code, /\bDrive\.Files\b/);
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  const folder = rootOf(p).folders.find((f) => f.name.startsWith("MAKER-A100") && !f.trashed);
+  const doc = folder.files.find((f) => f.mime === "application/vnd.google-apps.document" && !f.trashed);
+  assert.ok(doc, "no Google Doc in the product folder");
+  const lines = JSON.parse(doc.getBlob().getDataAsString());
+  assert.equal(lines[0].heading, "TITLE");
+  assert.ok(lines.some((l) => l.text === "תיאור קצר") && lines.every((l) => l.kind === "table" || l.rtl), "missing sections or not right-to-left");
 });
 
 // ---------- fast mode (direct calls) ----------

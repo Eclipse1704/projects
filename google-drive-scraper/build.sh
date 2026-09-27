@@ -10,4 +10,4 @@ cd "$(dirname "$0")"
     cat "$f"
   done
 } > install/Code.gs
-cp appsscript.json install/appsscript.json
+

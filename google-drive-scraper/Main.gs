@@ -29,6 +29,7 @@ var STATUS = {
 // ---------------- Menu & setup ----------------
 
 function onOpen() {
+  try { ensureOwnCopy(); setup(); } catch (e) {}   // first open after install / copy: create the sheets
   SpreadsheetApp.getUi().createMenu('סורק מוצרים')
     .addItem('▶ הרץ על הקישורים', 'startRun')
     .addItem('הגדרת מפתח API של Claude', 'setApiKey')
@@ -36,6 +37,29 @@ function onOpen() {
     .addItem('■ עצור', 'stopRun')
     .addToUi();
 }
+
+// Copying the spreadsheet ("make a copy" link) also copies the script's saved properties.
+// A copy must not use the original's API key or work queue: start clean.
+function ensureOwnCopy() {
+  var props = PropertiesService.getScriptProperties();
+  var id = SpreadsheetApp.getActive().getId();
+  var owner = props.getProperty('SHEET_ID');
+  if (owner === id) return;
+  if (owner) props.deleteAllProperties();
+  props.setProperty('SHEET_ID', id);
+}
+
+var HELP = [
+  ['איך משתמשים'],
+  ['1. בגיליון "מוצרים", בעמודה "קישור למוצר", מדביקים קישורים למוצרים - קישור בכל שורה, מכל אתר.'],
+  ['2. בתפריט למעלה: סורק מוצרים ← ▶ הרץ על הקישורים.'],
+  ['   בפעם הראשונה: מדביקים מפתח API של Claude (מ-console.anthropic.com) ומאשרים הרשאות של Google:'],
+  ['   Continue ← בוחרים חשבון ← Advanced ← Go to … (unsafe) ← Allow. זה מופיע כי הסקריפט שלכם ולא של Google.'],
+  ['3. אפשר לסגור את הגיליון. תוך כמה דקות הסטטוס מתחלף ל-✓, מופיע קישור לתיקייה בדרייב ונשלח מייל.'],
+  [''],
+  ['בכל מוצר בתיקייה: דף HTML בעברית, מסמך לקריאה, תיקיית תמונות, ברושור ומדריך למשתמש (מאתר היצרן הרשמי).'],
+  ['מילה שיצאה לא טוב בעברית? מוסיפים אותה בגיליון "הגדרות" (מילון מונחים / מילים שלא משתמשים בהן).'],
+];
 
 function setup() {
   var ss = SpreadsheetApp.getActive();
@@ -51,6 +75,13 @@ function setup() {
     products.setColumnWidth(COL.NOTES, 360);
     products.hideColumns(COL.ID);
   }
+  var help = ss.getSheetByName(SHEET_HELP) || ss.insertSheet(SHEET_HELP);
+  if (help.getLastRow() === 0) {
+    help.getRange(1, 1, HELP.length, 1).setValues(HELP);
+    help.getRange(1, 1).setFontWeight('bold');
+    help.setRightToLeft(true);
+    help.setColumnWidth(1, 900);
+  }
   var settings = ss.getSheetByName(SHEET_SETTINGS) || ss.insertSheet(SHEET_SETTINGS);
   if (settings.getLastRow() === 0) {
     settings.getRange(1, 1, 1, 3).setValues([['הגדרה', 'ערך', 'הסבר']]).setFontWeight('bold');
@@ -63,6 +94,7 @@ function setup() {
 }
 
 function setApiKey() {
+  ensureOwnCopy();
   var ui = SpreadsheetApp.getUi();
   var r = ui.prompt('מפתח API של Claude', 'הדביקו את המפתח מ-console.anthropic.com (נשמר בגיליון הזה בלבד, לא מוצג לאף אחד):', ui.ButtonSet.OK_CANCEL);
   if (r.getSelectedButton() !== ui.Button.OK) return;
@@ -75,6 +107,7 @@ function setApiKey() {
 }
 
 function startRun() {
+  ensureOwnCopy();
   setup();
   var settings = readSettings();
   if (!settings.apiKey) {
@@ -523,8 +556,8 @@ function stepSave(settings, p) {
   if (!saved.docs.some(function (d) { return d.kind === 'manual'; })) p.warnings.push('לא נמצא מדריך למשתמש באתר היצרן');
   if (!saved.videos.length) p.warnings.push('לא נמצא סרטון YouTube באתר היצרן');
 
-  replaceFile(folder, stem + '.html', Utilities.newBlob(productHtml(p, false), 'text/html', stem + '.html'));
-  saveAsGoogleDoc(folder, stem + ' - תיאור', productHtml(p, true));
+  replaceFile(folder, stem + '.html', Utilities.newBlob(productHtml(p), 'text/html', stem + '.html'));
+  saveAsGoogleDoc(folder, stem + ' - תיאור', p);
   folder.setName(stem + ' - ' + c.name);
 
   p.stage = 'done';

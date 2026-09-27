@@ -6,6 +6,7 @@
 
 var SHEET_PRODUCTS = 'מוצרים';
 var SHEET_SETTINGS = 'הגדרות';
+var SHEET_HELP = 'הוראות';
 
 // Products sheet columns (1-based).
 var COL = { LINK: 1, STATUS: 2, NAME: 3, MANUFACTURER: 4, FOLDER: 5, NOTES: 6, ID: 7 };
@@ -724,7 +725,7 @@ function jsonLd(p) {
   };
 }
 
-function productHtml(p, forDoc) {
+function productHtml(p) {
   var c = p.content;
   var list = function (items) { return (items || []).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('\n'); };
   var paras = String(c.overview || '').split(/\n\s*\n|\n/).filter(function (s) { return s.trim(); })
@@ -732,13 +733,11 @@ function productHtml(p, forDoc) {
   var specs = (c.specs || []).map(function (s) { return '<tr><th scope="row">' + esc(s.name) + '</th><td dir="auto">' + esc(s.value) + '</td></tr>'; }).join('\n');
   var videos = p.saved.videos.map(function (v) { return '<li><a href="' + esc(v.url) + '" class="ltr">' + esc(v.title || v.url) + '</a></li>'; }).join('\n');
   var images = p.saved.images.map(function (im, n) {
-    return forDoc
-      ? '<li class="ltr">' + esc(im.file.split('/').pop()) + ' (' + im.width + '×' + im.height + ')</li>'
-      : '<figure><a href="' + esc(im.file) + '"><img src="' + esc(im.file) + '" width="' + im.width + '" height="' + im.height + '" alt="' + esc(c.name) + ' - תמונה ' + (n + 1) + '"></a><figcaption class="ltr">' + esc(im.file.split('/').pop()) + ' · ' + im.width + '×' + im.height + '</figcaption></figure>';
+    return '<figure><a href="' + esc(im.file) + '"><img src="' + esc(im.file) + '" width="' + im.width + '" height="' + im.height + '" alt="' + esc(c.name) + ' - תמונה ' + (n + 1) + '"></a><figcaption class="ltr">' + esc(im.file.split('/').pop()) + ' · ' + im.width + '×' + im.height + '</figcaption></figure>';
   }).join('\n');
   var doc = function (kind) {
     var d = p.saved.docs.filter(function (x) { return x.kind === kind; })[0];
-    return d ? '<p><a href="' + esc(forDoc ? d.url : d.file) + '">' + esc(d.file) + '</a> <span class="meta">(מקור: <a href="' + esc(d.url) + '" class="ltr">' + esc(d.url) + '</a>)</span></p>' : NOT_FOUND;
+    return d ? '<p><a href="' + esc(d.file) + '">' + esc(d.file) + '</a> <span class="meta">(מקור: <a href="' + esc(d.url) + '" class="ltr">' + esc(d.url) + '</a>)</span></p>' : NOT_FOUND;
   };
   var pages = p.productPages.map(function (x) {
     return '<li><a href="' + esc(x.url) + '" class="ltr">' + esc(x.url) + '</a> ' + (x.official ? '(אתר היצרן הרשמי)' : '(אתר הספק)') + '</li>';
@@ -746,7 +745,7 @@ function productHtml(p, forDoc) {
   return '<!doctype html>\n<html lang="he" dir="rtl">\n<head>\n<meta charset="utf-8">\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
     '<title>' + esc(c.name) + '</title>\n<meta name="description" content="' + esc(c.short_description) + '">\n' +
-    (forDoc ? '' : '<script type="application/ld+json">' + JSON.stringify(jsonLd(p), null, 1).replace(/</g, '\\u003c') + '</script>\n<style>' + PAGE_CSS + '</style>\n') +
+    '<script type="application/ld+json">' + JSON.stringify(jsonLd(p), null, 1).replace(/</g, '\\u003c') + '</script>\n<style>' + PAGE_CSS + '</style>\n' +
     '</head>\n<body>\n' +
     '<article itemscope itemtype="https://schema.org/Product" data-manufacturer="' + esc(p.research.manufacturer) + '" data-model="' + esc(p.research.model) + '">\n' +
     '<header>\n<h1 id="product-name" itemprop="name">' + esc(c.name) + '</h1>\n' +
@@ -759,20 +758,58 @@ function productHtml(p, forDoc) {
     (specs ? '<section id="specifications">\n<h3>מפרט טכני</h3>\n<table>\n<tbody>\n' + specs + '\n</tbody>\n</table>\n</section>\n' : '') +
     '</section>\n\n' +
     '<section id="videos">\n<h2>סרטוני הדגמה ב-YouTube</h2>\n' + (videos ? '<ul>\n' + videos + '\n</ul>' : NOT_FOUND) + '\n</section>\n\n' +
-    '<section id="images">\n<h2>תמונות המוצר</h2>\n' + (images ? (forDoc ? '<ul>\n' + images + '\n</ul>' : '<div class="gallery">\n' + images + '\n</div>') : NOT_FOUND) + '\n</section>\n\n' +
+    '<section id="images">\n<h2>תמונות המוצר</h2>\n' + (images ? '<div class="gallery">\n' + images + '\n</div>' : NOT_FOUND) + '\n</section>\n\n' +
     '<section id="brochure">\n<h2>ברושור</h2>\n' + doc('brochure') + '\n</section>\n\n' +
     '<section id="manual">\n<h2>מדריך למשתמש</h2>\n' + doc('manual') + '\n</section>\n\n' +
     '<section id="product-pages">\n<h2>קישורים לדף המוצר</h2>\n<ul>\n' + pages + '\n</ul>\n</section>\n' +
     '</article>\n</body>\n</html>\n';
 }
 
-// A readable Google Doc next to the HTML file (Drive converts the HTML). Optional: skipped if unavailable.
-function saveAsGoogleDoc(folder, name, html) {
+// A readable Google Doc next to the HTML file (for reading in Drive). Optional: skipped on any error.
+function saveAsGoogleDoc(folder, name, p) {
   try {
     var it = folder.getFilesByName(name);
     while (it.hasNext()) { var f = it.next(); if (!f.isTrashed()) f.setTrashed(true); }
-    Drive.Files.create({ name: name, mimeType: 'application/vnd.google-apps.document', parents: [folder.getId()] },
-      Utilities.newBlob(html, 'text/html', name + '.html'));
+    var c = p.content;
+    var doc = DocumentApp.create(name);
+    var body = doc.getBody();
+    var H = DocumentApp.ParagraphHeading;
+    var rtl = function (el) { try { el.setLeftToRight(false); } catch (e) {} return el; };
+    var para = function (text, heading) { var x = rtl(body.appendParagraph(String(text || ''))); if (heading) x.setHeading(heading); return x; };
+    var bullet = function (text) { return rtl(body.appendListItem(String(text || ''))); };
+    var link = function (text, url) { var x = bullet(text); if (url) x.setLinkUrl(url); return x; };
+    var missing = 'לא נמצא באתר היצרן הרשמי.';
+
+    body.clear();
+    para(c.name, H.TITLE);
+    para('יצרן: ' + p.research.manufacturer + ' · דגם: ' + p.research.model);
+    para('תיאור קצר', H.HEADING1);
+    para(c.short_description);
+    para('תיאור מלא', H.HEADING1);
+    para('סקירה כללית', H.HEADING2);
+    String(c.overview || '').split(/\n\s*\n|\n/).filter(function (x) { return x.trim(); }).forEach(function (x) { para(x.trim()); });
+    if (c.usage && c.usage.length) { para('שימושים ואופן שימוש', H.HEADING2); c.usage.forEach(bullet); }
+    if (c.features && c.features.length) { para('תכונות עיקריות', H.HEADING2); c.features.forEach(bullet); }
+    if (c.specs && c.specs.length) {
+      para('מפרט טכני', H.HEADING2);
+      var table = body.appendTable(c.specs.map(function (x) { return [String(x.name), String(x.value)]; }));
+      for (var r = 0; r < table.getNumRows(); r++) {
+        rtl(table.getCell(r, 0).getChild(0).asParagraph()).setBold(true);
+      }
+    }
+    para('סרטוני הדגמה ב-YouTube', H.HEADING1);
+    if (p.saved.videos.length) p.saved.videos.forEach(function (v) { link(v.title || v.url, v.url); }); else para(missing);
+    para('תמונות המוצר (בתיקייה "' + IMAGES_FOLDER + '")', H.HEADING1);
+    if (p.saved.images.length) p.saved.images.forEach(function (im) { bullet(im.file.split('/').pop() + ' (' + im.width + '×' + im.height + ')'); }); else para(missing);
+    [['brochure', 'ברושור'], ['manual', 'מדריך למשתמש']].forEach(function (k) {
+      para(k[1], H.HEADING1);
+      var d = p.saved.docs.filter(function (x) { return x.kind === k[0]; })[0];
+      if (d) link(d.file + ' (מקור: ' + d.url + ')', d.url); else para(missing);
+    });
+    para('קישורים לדף המוצר', H.HEADING1);
+    p.productPages.forEach(function (x) { link(x.url + (x.official ? ' (אתר היצרן הרשמי)' : ' (אתר הספק)'), x.url); });
+    doc.saveAndClose();
+    DriveApp.getFileById(doc.getId()).moveTo(folder);
   } catch (e) {
     console.warn('Google Doc not created: ' + e.message);
   }
@@ -810,6 +847,7 @@ var STATUS = {
 // ---------------- Menu & setup ----------------
 
 function onOpen() {
+  try { ensureOwnCopy(); setup(); } catch (e) {}   // first open after install / copy: create the sheets
   SpreadsheetApp.getUi().createMenu('סורק מוצרים')
     .addItem('▶ הרץ על הקישורים', 'startRun')
     .addItem('הגדרת מפתח API של Claude', 'setApiKey')
@@ -817,6 +855,29 @@ function onOpen() {
     .addItem('■ עצור', 'stopRun')
     .addToUi();
 }
+
+// Copying the spreadsheet ("make a copy" link) also copies the script's saved properties.
+// A copy must not use the original's API key or work queue: start clean.
+function ensureOwnCopy() {
+  var props = PropertiesService.getScriptProperties();
+  var id = SpreadsheetApp.getActive().getId();
+  var owner = props.getProperty('SHEET_ID');
+  if (owner === id) return;
+  if (owner) props.deleteAllProperties();
+  props.setProperty('SHEET_ID', id);
+}
+
+var HELP = [
+  ['איך משתמשים'],
+  ['1. בגיליון "מוצרים", בעמודה "קישור למוצר", מדביקים קישורים למוצרים - קישור בכל שורה, מכל אתר.'],
+  ['2. בתפריט למעלה: סורק מוצרים ← ▶ הרץ על הקישורים.'],
+  ['   בפעם הראשונה: מדביקים מפתח API של Claude (מ-console.anthropic.com) ומאשרים הרשאות של Google:'],
+  ['   Continue ← בוחרים חשבון ← Advanced ← Go to … (unsafe) ← Allow. זה מופיע כי הסקריפט שלכם ולא של Google.'],
+  ['3. אפשר לסגור את הגיליון. תוך כמה דקות הסטטוס מתחלף ל-✓, מופיע קישור לתיקייה בדרייב ונשלח מייל.'],
+  [''],
+  ['בכל מוצר בתיקייה: דף HTML בעברית, מסמך לקריאה, תיקיית תמונות, ברושור ומדריך למשתמש (מאתר היצרן הרשמי).'],
+  ['מילה שיצאה לא טוב בעברית? מוסיפים אותה בגיליון "הגדרות" (מילון מונחים / מילים שלא משתמשים בהן).'],
+];
 
 function setup() {
   var ss = SpreadsheetApp.getActive();
@@ -832,6 +893,13 @@ function setup() {
     products.setColumnWidth(COL.NOTES, 360);
     products.hideColumns(COL.ID);
   }
+  var help = ss.getSheetByName(SHEET_HELP) || ss.insertSheet(SHEET_HELP);
+  if (help.getLastRow() === 0) {
+    help.getRange(1, 1, HELP.length, 1).setValues(HELP);
+    help.getRange(1, 1).setFontWeight('bold');
+    help.setRightToLeft(true);
+    help.setColumnWidth(1, 900);
+  }
   var settings = ss.getSheetByName(SHEET_SETTINGS) || ss.insertSheet(SHEET_SETTINGS);
   if (settings.getLastRow() === 0) {
     settings.getRange(1, 1, 1, 3).setValues([['הגדרה', 'ערך', 'הסבר']]).setFontWeight('bold');
@@ -844,6 +912,7 @@ function setup() {
 }
 
 function setApiKey() {
+  ensureOwnCopy();
   var ui = SpreadsheetApp.getUi();
   var r = ui.prompt('מפתח API של Claude', 'הדביקו את המפתח מ-console.anthropic.com (נשמר בגיליון הזה בלבד, לא מוצג לאף אחד):', ui.ButtonSet.OK_CANCEL);
   if (r.getSelectedButton() !== ui.Button.OK) return;
@@ -856,6 +925,7 @@ function setApiKey() {
 }
 
 function startRun() {
+  ensureOwnCopy();
   setup();
   var settings = readSettings();
   if (!settings.apiKey) {
@@ -1304,8 +1374,8 @@ function stepSave(settings, p) {
   if (!saved.docs.some(function (d) { return d.kind === 'manual'; })) p.warnings.push('לא נמצא מדריך למשתמש באתר היצרן');
   if (!saved.videos.length) p.warnings.push('לא נמצא סרטון YouTube באתר היצרן');
 
-  replaceFile(folder, stem + '.html', Utilities.newBlob(productHtml(p, false), 'text/html', stem + '.html'));
-  saveAsGoogleDoc(folder, stem + ' - תיאור', productHtml(p, true));
+  replaceFile(folder, stem + '.html', Utilities.newBlob(productHtml(p), 'text/html', stem + '.html'));
+  saveAsGoogleDoc(folder, stem + ' - תיאור', p);
   folder.setName(stem + ' - ' + c.name);
 
   p.stage = 'done';

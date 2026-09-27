@@ -76,10 +76,12 @@ class Sheet {
 
 export function makeGoogle({ fetchHandler }) {
   const sheets = new Map();
+  const sheetId = { value: "sheet-1" };
   const ss = {
     getSheetByName: (n) => sheets.get(n) || null,
     insertSheet: (n) => { const s = new Sheet(n); sheets.set(n, s); return s; },
     getUrl: () => "https://docs.google.com/spreadsheets/d/test",
+    getId: () => sheetId.value,
     toast: () => {},
   };
   const props = () => {
@@ -88,6 +90,7 @@ export function makeGoogle({ fetchHandler }) {
       getProperty: (k) => m.get(k) ?? null,
       setProperty: (k, v) => { if (Buffer.byteLength(String(v)) > 9 * 1024) throw new Error("Argument too large: value"); m.set(k, String(v)); }, // real limit: 9KB per value
       deleteProperty: (k) => m.delete(k),
+      deleteAllProperties: () => m.clear(),
       getKeys: () => [...m.keys()],
       m,
     };
@@ -147,8 +150,34 @@ export function makeGoogle({ fetchHandler }) {
     DriveApp: {
       getFoldersByName: (n) => myDrive.getFoldersByName(n),
       createFolder: (n) => myDrive.createFolder(n),
+      getFileById: (id) => {
+        const find = (f) => f.files.find((x) => x.id === id) || f.folders.map(find).find(Boolean);
+        const file = find(myDrive);
+        return { moveTo: (folder) => { file.parent.files.splice(file.parent.files.indexOf(file), 1); folder.files.push(file); file.parent = folder; } };
+      },
     },
-    Drive: {
+    DocumentApp: {
+      ParagraphHeading: { TITLE: "TITLE", HEADING1: "HEADING1", HEADING2: "HEADING2" },
+      create(name) {
+        const lines = [];
+        const el = (kind, text) => { const e = { kind, text, heading: null, link: null, rtl: true, bold: false }; lines.push(e);
+          return { setHeading: (h) => { e.heading = h; return this; }, setLinkUrl: (u) => { e.link = u; }, setLeftToRight: (v) => { e.rtl = !v; }, setBold: (b) => { e.bold = b; } }; };
+        const file = new DFile(myDrive, new Blob("", "application/vnd.google-apps.document", name), "application/vnd.google-apps.document");
+        myDrive.files.push(file);
+        file.docLines = lines;
+        return {
+          getId: () => file.id,
+          getBody: () => ({
+            clear() { lines.length = 0; },
+            appendParagraph: (t) => { const h = el("p", t); return { ...h, setHeading: (x) => { lines[lines.length - 1].heading = x; return h; } }; },
+            appendListItem: (t) => el("li", t),
+            appendTable: (rows) => { lines.push({ kind: "table", rows }); return { getNumRows: () => rows.length, getCell: () => ({ getChild: () => ({ asParagraph: () => ({ setLeftToRight() {}, setBold() {} }) }) }) }; },
+          }),
+          saveAndClose() { file.blob = new Blob(JSON.stringify(lines), "application/vnd.google-apps.document", name); },
+        };
+      },
+    },
+    Drive_unused: {
       Files: {
         create(resource, blob) {
           const find = (f) => (f.id === resource.parents[0] ? f : f.folders.map(find).find(Boolean));
@@ -177,5 +206,5 @@ export function makeGoogle({ fetchHandler }) {
     Session: { getEffectiveUser: () => ({ getEmail: () => "dad@example.com" }) },
     console: { log() {}, warn() {}, error: console.error },
   };
-  return { google, sheets, myDrive, userProps, scriptProps, triggers, mails, log, alerts };
+  return { google, sheets, sheetId, myDrive, userProps, scriptProps, triggers, mails, log, alerts };
 }

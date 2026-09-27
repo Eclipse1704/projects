@@ -2,6 +2,7 @@
 
 var SHEET_PRODUCTS = 'מוצרים';
 var SHEET_SETTINGS = 'הגדרות';
+var SHEET_HELP = 'הוראות';
 
 // Products sheet columns (1-based).
 var COL = { LINK: 1, STATUS: 2, NAME: 3, MANUFACTURER: 4, FOLDER: 5, NOTES: 6, ID: 7 };
