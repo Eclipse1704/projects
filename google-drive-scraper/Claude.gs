@@ -123,27 +123,44 @@ function parseResearch(message) {
 
 // ---------- Stage: write the Hebrew entry and choose the files ----------
 
+// The fields of the site's "add product" screen (WooCommerce + Yoast), plus the files to keep.
 var WRITE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['name', 'short_description', 'overview', 'usage', 'features', 'specs', 'image_indexes', 'brochure_index', 'manual_index', 'video_indexes'],
+  required: ['name', 'short_description', 'description_paragraphs', 'usage', 'specs', 'category', 'tags', 'focus_keyphrase', 'seo_title', 'meta_description', 'slug',
+    'image_indexes', 'brochure_index', 'manual_index', 'video_indexes'],
   properties: {
-    name: { type: 'string', description: "Hebrew product title in the house style, e.g. 'מצלמה תרמית 640X480 פיקסלים Fotric 348A'" },
-    short_description: { type: 'string', description: 'Hebrew, at most ' + SHORT_MAX_WORDS + ' words' },
-    overview: { type: 'string', description: 'Hebrew overview; paragraphs separated by a blank line' },
-    usage: { type: 'array', items: { type: 'string' }, description: 'Hebrew bullet points: applications and how the product is used' },
-    features: { type: 'array', items: { type: 'string' }, description: 'Hebrew bullet points: key features' },
+    name: { type: 'string', description: "Hebrew product title in the house style, e.g. 'מצלמה תרמית לסמארטפון 320X240 פיקסלים Fotric TP320A'" },
+    short_description: { type: 'string', description: 'Hebrew, one paragraph, at most ' + SHORT_MAX_WORDS + ' words (usually 45-65): what it is and how it works, who it is for, one standout advantage' },
+    description_paragraphs: { type: 'array', items: { type: 'string' }, description: 'the full description: 2-4 Hebrew paragraphs of running text (no headings, no lists)' },
+    usage: { type: 'array', items: { type: 'string' }, description: 'Hebrew bullet list of applications (4-8 short lines), shown after the paragraphs' },
     specs: {
       type: 'array',
-      description: 'technical specifications; Hebrew labels, values as in the source',
+      description: 'key technical specifications for internal reference (not shown on the site - the full spec is in the catalog PDF); Hebrew labels, values as in the source',
       items: { type: 'object', additionalProperties: false, required: ['name', 'value'], properties: { name: { type: 'string' }, value: { type: 'string' } } },
     },
-    image_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of up to 8 photos of THIS product, best first (the first 3-5 high-resolution ones are kept). No logos, icons, banners, certificates, other products or accessories' },
+    category: { type: 'string', description: 'exactly one name from <site_categories> that fits this product, or "" if none fits / no list' },
+    tags: { type: 'array', items: { type: 'string' }, description: '3-6 short Hebrew product tags (product type, use, brand)' },
+    focus_keyphrase: { type: 'string', description: 'Yoast focus keyphrase: what a customer in Israel would search for, e.g. "מצלמה תרמית לסמארטפון"' },
+    seo_title: { type: 'string', description: 'Hebrew SEO title, up to 60 characters, contains the focus keyphrase' },
+    meta_description: { type: 'string', description: 'Hebrew meta description, 120-155 characters, contains the focus keyphrase' },
+    slug: { type: 'string', description: 'URL slug: lowercase English words and digits joined with hyphens, e.g. "fotric-tp320a-smartphone-thermal-camera"' },
+    image_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of up to 8 photos of THIS product, best first (the first is the main product image; the first 3-5 high-resolution ones are kept). No logos, icons, banners, certificates, other products or accessories' },
     brochure_index: { type: 'integer', description: 'index of the PDF that is this product\'s brochure / datasheet / catalogue, or -1' },
     manual_index: { type: 'integer', description: 'index of the PDF that is this product\'s user manual, or -1' },
-    video_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of YouTube videos that demonstrate THIS product' },
+    video_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of YouTube videos that demonstrate THIS product, best first' },
   },
 };
+
+// How a product page on the site is built (a real page, shortened), so Claude writes to the same structure.
+var PAGE_STRUCTURE_EXAMPLE =
+  'name: מצלמה תרמית לסמארטפון 320X240 פיקסלים Fotric TP320A\n\n' +
+  'short_description: מצלמה תרמית קטנה שמתחברת ישירות לחיבור USB-C בטלפון אנדרואיד והופכת אותו למצלמת אינפרה אדום מקצועית תוך שניות, בלי סוללה ובלי זמן אתחול. מתאימה לחשמלאים, טכנאי מיזוג ובודקי בתים שצריכים לאתר נקודות חום בלוחות חשמל, מנועים ומערכות מיזוג. תומכת בתוכנת AnalyzIR לניתוח מתקדם במחשב וביצירת דוחות.\n\n' +
+  'description_paragraphs:\n' +
+  '1. Fotric TP320A היא מצלמה תרמית פלאג-אנד-פליי שמתחברת ישירות לחיבור USB-C בטלפון אנדרואיד והופכת אותו למצלמת אינפרה אדום מלאה תוך שניות. אין צורך בסוללה נפרדת, בזמן אתחול או בהגדרות מסובכות - מחברים את המצלמה, פותחים את אפליקציית FOTRIC Genie ומתחילים לסרוק.\n' +
+  '2. המצלמה מבוססת על חיישן ברזולוציה 320X240 פיקסלים עם רזולוציית-על (Super Resolution) שמגיעה עד 640X480 פיקסלים, ורגישות תרמית (NETD) גבוהה של פחות מ-35mK. השילוב מאפשר לזהות הפרשי טמפרטורה קטנים מאוד בלוחות חשמל, מנועים ומערכות מיזוג אוויר. טווח מדידת הטמפרטורה הרחב - מ-20°C- עד 550°C - מתאים גם לעבודות תעשייתיות וגם לבדיקות ביתיות.\n' +
+  '3. הגוף קומפקטי מאוד, במשקל 40 גרם בלבד ובמידות 71X33X15.5 מ"מ, ונכנס בקלות לכיס, לתיק כלים או לתרמיל. דרגת אטימות IP40 ועמידות בנפילה מגובה מטר הופכות אותה למכשיר שעומד גם בתנאי שטח.\n\n' +
+  'usage:\n- בדיקת לוחות חשמל ואיתור נקודות חמות לפני שהופכות לתקלה\n- מעקב אחרי טמפרטורת מנועים וציוד מכני\n- אבחון מערכות מיזוג ואוורור (HVAC) ובדיקת פתחי אוויר\n- ביקורות אנרגיה בבתים ואיתור בעיות בידוד';
 
 function systemPrompt(settings, styleExamples) {
   var examples = styleExamples.map(function (e, i) {
@@ -159,15 +176,19 @@ function systemPrompt(settings, styleExamples) {
     '- משפטים קצרים וברורים, בגוף פעיל. כותבים כמו טכנאי מנוסה שמסביר ללקוח מקצועי מה המכשיר עושה ולמה הוא טוב לו - בלי מליצות ובלי שפה שיווקית מתורגמת.\n' +
     '- לא לתרגם מילה במילה מאנגלית. לדוגמה: לא "המכשיר הינו פתרון מושלם עבור..." אלא "המכשיר מתאים ל..."; לא "מספק למשתמש יכולת לבצע איתור" אלא "מאתר"; לא "חווית משתמש אינטואיטיבית" אלא "תפעול פשוט".\n' +
     '- לא להשתמש במילים ובביטויים שברשימה <avoid_words>.\n' +
-    '- short_description: עד ' + SHORT_MAX_WORDS + ' מילים - מה המוצר, למי הוא מיועד והיתרון המרכזי.\n' +
-    '- התיאור המלא = overview + usage + features + specs, ביחד עד ' + FULL_MAX_WORDS + ' מילים. usage מתאר את השימושים וגם איך עובדים עם המוצר. כשאין מקום - לשמור את המפרטים החשובים ביותר.\n\n' +
+    '- short_description: פסקה אחת, עד ' + SHORT_MAX_WORDS + ' מילים (בדרך כלל 45-65): מה המוצר ואיך הוא עובד, למי הוא מתאים, ויתרון בולט אחד.\n' +
+    '- התיאור המלא בנוי כמו בדפים באתר: description_paragraphs = 2-4 פסקאות טקסט רציף (בלי כותרות ובלי רשימות), ואחריהן usage = רשימת שימושים קצרה. הנתונים הטכניים החשובים (רזולוציה, רגישות, טווחים, מידות, משקל, אטימות) משולבים בתוך המשפטים. ביחד עד ' + FULL_MAX_WORDS + ' מילים. אין טבלת מפרט בדף - המפרט המלא נמצא בקטלוג ה-PDF; specs הוא רק רשימה פנימית לעיון.\n' +
+    '- פסקה 1: מה המוצר ואיך מתחילים לעבוד איתו. פסקה 2: הנתונים הטכניים המרכזיים ומה הם נותנים בעבודה. פסקה 3: גוף, משקל, עמידות, אביזרים ותוכנה (רק מה שמופיע במקור).\n' +
+    '- שדות SEO (Yoast): focus_keyphrase = מה שלקוח בישראל היה מחפש בגוגל; seo_title עד 60 תווים; meta_description עד 155 תווים; שניהם כוללים את ביטוי המפתח ונשמעים טבעי. slug באנגלית, באותיות קטנות ומקפים.\n' +
+    '- category: בוחרים בדיוק שם אחד מתוך <site_categories>. tags: 3-6 תגיות קצרות בעברית.\n\n' +
+    '<page_structure_example>\n' + PAGE_STRUCTURE_EXAMPLE + '\n</page_structure_example>\n\n' +
     'עובדות:\n' +
     '- רק עובדות שמופיעות בחומר המקור. אסור להמציא נתונים, מספרים, תקנים, אחריות או טענות. מה שלא מופיע - לא נכתב.\n' +
     '- כשיש סתירה, עדיף המידע מאתר היצרן הרשמי ומהברושור שלו.\n' +
     '- בלי מחירים, בלי פרטי התקשרות, בלי סופרלטיבים שלא מופיעים במקור.\n\n' +
     'לפני שמחזירים תשובה: קוראים שוב כל משפט בעברית. משפט שנשמע מתורגם, מסורבל או לא כמו שאומרים בענף - כותבים מחדש.\n\n' +
     'בחירת קבצים: בוחרים רק מתוך הרשימות הממוספרות (כולן מאתר היצרן הרשמי). אם אין פריט מתאים - רשימה ריקה או -1.\n\n' +
-    '<glossary>\n' + settings.glossary + '\n</glossary>\n\n<avoid_words>\n' + (settings.avoidWords || []).join('\n') + '\n</avoid_words>\n\n<style_examples>\n' + (examples || '(no examples)') + '\n</style_examples>';
+    '<glossary>\n' + settings.glossary + '\n</glossary>\n\n<avoid_words>\n' + (settings.avoidWords || []).join('\n') + '\n</avoid_words>\n\n<site_categories>\n' + (siteCategories(settings).join('\n') || '(no list - leave category empty)') + '\n</site_categories>\n\n<style_examples>\n' + (examples || '(no examples)') + '\n</style_examples>';
 }
 
 function writeParams(settings, p, styleExamples, brochureBase64, feedback) {
@@ -210,17 +231,32 @@ function containsWord(text, word) {
   return new RegExp('(^|[^\u0590-\u05FF])' + esc + '(?=$|[^\u0590-\u05FF])').test(text);
 }
 
+// The full description on the site: the paragraphs and the list of uses.
+function descriptionParts(c) {
+  return (c.description_paragraphs || []).concat(c.usage || []);
+}
+
 function validateContent(c, avoidWords) {
   var problems = [];
-  ['name', 'short_description', 'overview'].forEach(function (k) { if (!String(c[k] || '').trim()) problems.push('missing ' + k); });
+  ['name', 'short_description'].forEach(function (k) { if (!String(c[k] || '').trim()) problems.push('missing ' + k); });
+  if (!(c.description_paragraphs || []).some(function (x) { return String(x).trim(); })) problems.push('missing description_paragraphs');
   var s = wordCount(c.short_description);
   if (s > SHORT_MAX_WORDS) problems.push('short_description has ' + s + ' words (max ' + SHORT_MAX_WORDS + ')');
-  var parts = [c.overview].concat(c.usage || [], c.features || [], (c.specs || []).map(function (x) { return x.name + ' ' + x.value; }));
-  var f = parts.reduce(function (n, x) { return n + wordCount(x); }, 0);
-  if (f > FULL_MAX_WORDS) problems.push('full description (overview+usage+features+specs) has ' + f + ' words (max ' + FULL_MAX_WORDS + ')');
-  if (!/[\u0590-\u05FF]/.test(String(c.short_description) + String(c.overview))) problems.push('texts are not in Hebrew');
-  var all = [c.name, c.short_description, c.overview].concat(c.usage || [], c.features || [], (c.specs || []).map(function (x) { return x.name; })).join('\n');
+  var f = descriptionParts(c).reduce(function (n, x) { return n + wordCount(x); }, 0);
+  if (f > FULL_MAX_WORDS) problems.push('full description (description_paragraphs + usage) has ' + f + ' words (max ' + FULL_MAX_WORDS + ')');
+  if (!/[\u0590-\u05FF]/.test(String(c.short_description) + (c.description_paragraphs || []).join(' '))) problems.push('texts are not in Hebrew');
+  if (String(c.seo_title || '').length > 80) problems.push('seo_title has ' + String(c.seo_title).length + ' characters (max 60)');
+  if (String(c.meta_description || '').length > 200) problems.push('meta_description has ' + String(c.meta_description).length + ' characters (max 155)');
+  var all = [c.name, c.short_description, c.seo_title, c.meta_description].concat(descriptionParts(c), c.tags || []).join('\n');
   var used = (avoidWords || []).filter(function (w) { return containsWord(all, w); });
   if (used.length) problems.push('uses words from <avoid_words>: ' + used.join(', ') + ' - rewrite those sentences');
   return problems;
+}
+
+// Small things fixed without asking Claude again.
+function tidyContent(c, categories) {
+  c.slug = String(c.slug || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  c.tags = (c.tags || []).map(function (t) { return String(t).trim(); }).filter(String).slice(0, 8);
+  if (categories && categories.length && categories.indexOf(c.category) < 0) c.category = '';
+  return c;
 }

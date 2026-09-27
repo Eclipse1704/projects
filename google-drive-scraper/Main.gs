@@ -748,6 +748,28 @@ function styleExamples(settings) {
   return out;
 }
 
+// The product categories that exist on the site (WooCommerce's public Store API), so Claude picks one of them.
+var CATEGORIES_MEMO = null;
+function siteCategories(settings) {
+  if (CATEGORIES_MEMO) return CATEGORIES_MEMO;
+  CATEGORIES_MEMO = [];
+  if (!settings.site) return CATEGORIES_MEMO;
+  var cache = CacheService.getScriptCache();
+  var key = 'cats_' + Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, settings.site));
+  var hit = cache.get(key);
+  if (hit) return (CATEGORIES_MEMO = JSON.parse(hit));
+  try {
+    var r = UrlFetchApp.fetch(settings.site.replace(/\/+$/, '') + '/wp-json/wc/store/v1/products/categories?per_page=100', { muteHttpExceptions: true });
+    if (r.getResponseCode() === 200) {
+      CATEGORIES_MEMO = JSON.parse(r.getContentText()).map(function (x) { return decodeEntities(String(x.name || '')).trim(); }).filter(String);
+      cache.put(key, JSON.stringify(CATEGORIES_MEMO), 21600);
+    }
+  } catch (e) {
+    console.warn('categories not read: ' + e.message);
+  }
+  return CATEGORIES_MEMO;
+}
+
 var MAX_POLL_FAILURES = 10;
 
 function pollBatches(settings) {
@@ -874,6 +896,7 @@ function applyWrite(p, result) {
     if (p.writeAttempts < MAX_WRITE_ATTEMPTS) { p.stage = 'write_pending'; return; }
     throw new Error('Claude returned invalid JSON');
   }
+  tidyContent(content, siteCategories(readSettings()));
   var problems = validateContent(content, readSettings().avoidWords);
   if (problems.length && p.writeAttempts < MAX_WRITE_ATTEMPTS) {
     p.writeFeedback = '\n\nבטיוטה הקודמת היו הבעיות הבאות - תקן/י:\n- ' + problems.join('\n- ') + '\nהטיוטה הקודמת:\n' + JSON.stringify(content);

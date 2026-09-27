@@ -8,6 +8,7 @@ var SHORT_MAX_WORDS = 80;
 var FULL_MAX_WORDS = 500;
 
 var DEFAULT_SETTINGS = [
+  ['אתר', 'https://www.ndt24.co.il', 'כתובת האתר שלכם. המערכת קוראת ממנו את רשימת קטגוריות המוצרים'],
   ['תיקייה בדרייב', 'NDT24 - מוצרים', 'שם התיקייה ב-Google Drive שאליה נשמרים המוצרים (תיקייה לכל מוצר)'],
   ['מודל', 'claude-sonnet-5', 'מודל Claude. claude-sonnet-5 = זול (ברירת מחדל). claude-opus-5 = חזק יותר, יקר פי 2.5'],
   ['מצב מהיר', 'כן', 'כן = כל מוצר מוכן תוך דקות (כ-0.4$ למוצר). לא = עבודת רקע, יכול לקחת עד שעה, חצי מחיר (כ-0.2$ למוצר)'],
@@ -46,6 +47,7 @@ function readSettings() {
   if (SETTINGS_MEMO) return SETTINGS_MEMO;
   var map = settingsMap();
   SETTINGS_MEMO = {
+    site: /^https?:\/\//.test(map['אתר']) ? map['אתר'] : '',
     rootFolder: map['תיקייה בדרייב'],
     model: map['מודל'],
     email: map['שליחת מייל בסיום'] !== 'לא',
@@ -557,27 +559,44 @@ function parseResearch(message) {
 
 // ---------- Stage: write the Hebrew entry and choose the files ----------
 
+// The fields of the site's "add product" screen (WooCommerce + Yoast), plus the files to keep.
 var WRITE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['name', 'short_description', 'overview', 'usage', 'features', 'specs', 'image_indexes', 'brochure_index', 'manual_index', 'video_indexes'],
+  required: ['name', 'short_description', 'description_paragraphs', 'usage', 'specs', 'category', 'tags', 'focus_keyphrase', 'seo_title', 'meta_description', 'slug',
+    'image_indexes', 'brochure_index', 'manual_index', 'video_indexes'],
   properties: {
-    name: { type: 'string', description: "Hebrew product title in the house style, e.g. 'מצלמה תרמית 640X480 פיקסלים Fotric 348A'" },
-    short_description: { type: 'string', description: 'Hebrew, at most ' + SHORT_MAX_WORDS + ' words' },
-    overview: { type: 'string', description: 'Hebrew overview; paragraphs separated by a blank line' },
-    usage: { type: 'array', items: { type: 'string' }, description: 'Hebrew bullet points: applications and how the product is used' },
-    features: { type: 'array', items: { type: 'string' }, description: 'Hebrew bullet points: key features' },
+    name: { type: 'string', description: "Hebrew product title in the house style, e.g. 'מצלמה תרמית לסמארטפון 320X240 פיקסלים Fotric TP320A'" },
+    short_description: { type: 'string', description: 'Hebrew, one paragraph, at most ' + SHORT_MAX_WORDS + ' words (usually 45-65): what it is and how it works, who it is for, one standout advantage' },
+    description_paragraphs: { type: 'array', items: { type: 'string' }, description: 'the full description: 2-4 Hebrew paragraphs of running text (no headings, no lists)' },
+    usage: { type: 'array', items: { type: 'string' }, description: 'Hebrew bullet list of applications (4-8 short lines), shown after the paragraphs' },
     specs: {
       type: 'array',
-      description: 'technical specifications; Hebrew labels, values as in the source',
+      description: 'key technical specifications for internal reference (not shown on the site - the full spec is in the catalog PDF); Hebrew labels, values as in the source',
       items: { type: 'object', additionalProperties: false, required: ['name', 'value'], properties: { name: { type: 'string' }, value: { type: 'string' } } },
     },
-    image_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of up to 8 photos of THIS product, best first (the first 3-5 high-resolution ones are kept). No logos, icons, banners, certificates, other products or accessories' },
+    category: { type: 'string', description: 'exactly one name from <site_categories> that fits this product, or "" if none fits / no list' },
+    tags: { type: 'array', items: { type: 'string' }, description: '3-6 short Hebrew product tags (product type, use, brand)' },
+    focus_keyphrase: { type: 'string', description: 'Yoast focus keyphrase: what a customer in Israel would search for, e.g. "מצלמה תרמית לסמארטפון"' },
+    seo_title: { type: 'string', description: 'Hebrew SEO title, up to 60 characters, contains the focus keyphrase' },
+    meta_description: { type: 'string', description: 'Hebrew meta description, 120-155 characters, contains the focus keyphrase' },
+    slug: { type: 'string', description: 'URL slug: lowercase English words and digits joined with hyphens, e.g. "fotric-tp320a-smartphone-thermal-camera"' },
+    image_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of up to 8 photos of THIS product, best first (the first is the main product image; the first 3-5 high-resolution ones are kept). No logos, icons, banners, certificates, other products or accessories' },
     brochure_index: { type: 'integer', description: 'index of the PDF that is this product\'s brochure / datasheet / catalogue, or -1' },
     manual_index: { type: 'integer', description: 'index of the PDF that is this product\'s user manual, or -1' },
-    video_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of YouTube videos that demonstrate THIS product' },
+    video_indexes: { type: 'array', items: { type: 'integer' }, description: 'indexes of YouTube videos that demonstrate THIS product, best first' },
   },
 };
+
+// How a product page on the site is built (a real page, shortened), so Claude writes to the same structure.
+var PAGE_STRUCTURE_EXAMPLE =
+  'name: מצלמה תרמית לסמארטפון 320X240 פיקסלים Fotric TP320A\n\n' +
+  'short_description: מצלמה תרמית קטנה שמתחברת ישירות לחיבור USB-C בטלפון אנדרואיד והופכת אותו למצלמת אינפרה אדום מקצועית תוך שניות, בלי סוללה ובלי זמן אתחול. מתאימה לחשמלאים, טכנאי מיזוג ובודקי בתים שצריכים לאתר נקודות חום בלוחות חשמל, מנועים ומערכות מיזוג. תומכת בתוכנת AnalyzIR לניתוח מתקדם במחשב וביצירת דוחות.\n\n' +
+  'description_paragraphs:\n' +
+  '1. Fotric TP320A היא מצלמה תרמית פלאג-אנד-פליי שמתחברת ישירות לחיבור USB-C בטלפון אנדרואיד והופכת אותו למצלמת אינפרה אדום מלאה תוך שניות. אין צורך בסוללה נפרדת, בזמן אתחול או בהגדרות מסובכות - מחברים את המצלמה, פותחים את אפליקציית FOTRIC Genie ומתחילים לסרוק.\n' +
+  '2. המצלמה מבוססת על חיישן ברזולוציה 320X240 פיקסלים עם רזולוציית-על (Super Resolution) שמגיעה עד 640X480 פיקסלים, ורגישות תרמית (NETD) גבוהה של פחות מ-35mK. השילוב מאפשר לזהות הפרשי טמפרטורה קטנים מאוד בלוחות חשמל, מנועים ומערכות מיזוג אוויר. טווח מדידת הטמפרטורה הרחב - מ-20°C- עד 550°C - מתאים גם לעבודות תעשייתיות וגם לבדיקות ביתיות.\n' +
+  '3. הגוף קומפקטי מאוד, במשקל 40 גרם בלבד ובמידות 71X33X15.5 מ"מ, ונכנס בקלות לכיס, לתיק כלים או לתרמיל. דרגת אטימות IP40 ועמידות בנפילה מגובה מטר הופכות אותה למכשיר שעומד גם בתנאי שטח.\n\n' +
+  'usage:\n- בדיקת לוחות חשמל ואיתור נקודות חמות לפני שהופכות לתקלה\n- מעקב אחרי טמפרטורת מנועים וציוד מכני\n- אבחון מערכות מיזוג ואוורור (HVAC) ובדיקת פתחי אוויר\n- ביקורות אנרגיה בבתים ואיתור בעיות בידוד';
 
 function systemPrompt(settings, styleExamples) {
   var examples = styleExamples.map(function (e, i) {
@@ -593,15 +612,19 @@ function systemPrompt(settings, styleExamples) {
     '- משפטים קצרים וברורים, בגוף פעיל. כותבים כמו טכנאי מנוסה שמסביר ללקוח מקצועי מה המכשיר עושה ולמה הוא טוב לו - בלי מליצות ובלי שפה שיווקית מתורגמת.\n' +
     '- לא לתרגם מילה במילה מאנגלית. לדוגמה: לא "המכשיר הינו פתרון מושלם עבור..." אלא "המכשיר מתאים ל..."; לא "מספק למשתמש יכולת לבצע איתור" אלא "מאתר"; לא "חווית משתמש אינטואיטיבית" אלא "תפעול פשוט".\n' +
     '- לא להשתמש במילים ובביטויים שברשימה <avoid_words>.\n' +
-    '- short_description: עד ' + SHORT_MAX_WORDS + ' מילים - מה המוצר, למי הוא מיועד והיתרון המרכזי.\n' +
-    '- התיאור המלא = overview + usage + features + specs, ביחד עד ' + FULL_MAX_WORDS + ' מילים. usage מתאר את השימושים וגם איך עובדים עם המוצר. כשאין מקום - לשמור את המפרטים החשובים ביותר.\n\n' +
+    '- short_description: פסקה אחת, עד ' + SHORT_MAX_WORDS + ' מילים (בדרך כלל 45-65): מה המוצר ואיך הוא עובד, למי הוא מתאים, ויתרון בולט אחד.\n' +
+    '- התיאור המלא בנוי כמו בדפים באתר: description_paragraphs = 2-4 פסקאות טקסט רציף (בלי כותרות ובלי רשימות), ואחריהן usage = רשימת שימושים קצרה. הנתונים הטכניים החשובים (רזולוציה, רגישות, טווחים, מידות, משקל, אטימות) משולבים בתוך המשפטים. ביחד עד ' + FULL_MAX_WORDS + ' מילים. אין טבלת מפרט בדף - המפרט המלא נמצא בקטלוג ה-PDF; specs הוא רק רשימה פנימית לעיון.\n' +
+    '- פסקה 1: מה המוצר ואיך מתחילים לעבוד איתו. פסקה 2: הנתונים הטכניים המרכזיים ומה הם נותנים בעבודה. פסקה 3: גוף, משקל, עמידות, אביזרים ותוכנה (רק מה שמופיע במקור).\n' +
+    '- שדות SEO (Yoast): focus_keyphrase = מה שלקוח בישראל היה מחפש בגוגל; seo_title עד 60 תווים; meta_description עד 155 תווים; שניהם כוללים את ביטוי המפתח ונשמעים טבעי. slug באנגלית, באותיות קטנות ומקפים.\n' +
+    '- category: בוחרים בדיוק שם אחד מתוך <site_categories>. tags: 3-6 תגיות קצרות בעברית.\n\n' +
+    '<page_structure_example>\n' + PAGE_STRUCTURE_EXAMPLE + '\n</page_structure_example>\n\n' +
     'עובדות:\n' +
     '- רק עובדות שמופיעות בחומר המקור. אסור להמציא נתונים, מספרים, תקנים, אחריות או טענות. מה שלא מופיע - לא נכתב.\n' +
     '- כשיש סתירה, עדיף המידע מאתר היצרן הרשמי ומהברושור שלו.\n' +
     '- בלי מחירים, בלי פרטי התקשרות, בלי סופרלטיבים שלא מופיעים במקור.\n\n' +
     'לפני שמחזירים תשובה: קוראים שוב כל משפט בעברית. משפט שנשמע מתורגם, מסורבל או לא כמו שאומרים בענף - כותבים מחדש.\n\n' +
     'בחירת קבצים: בוחרים רק מתוך הרשימות הממוספרות (כולן מאתר היצרן הרשמי). אם אין פריט מתאים - רשימה ריקה או -1.\n\n' +
-    '<glossary>\n' + settings.glossary + '\n</glossary>\n\n<avoid_words>\n' + (settings.avoidWords || []).join('\n') + '\n</avoid_words>\n\n<style_examples>\n' + (examples || '(no examples)') + '\n</style_examples>';
+    '<glossary>\n' + settings.glossary + '\n</glossary>\n\n<avoid_words>\n' + (settings.avoidWords || []).join('\n') + '\n</avoid_words>\n\n<site_categories>\n' + (siteCategories(settings).join('\n') || '(no list - leave category empty)') + '\n</site_categories>\n\n<style_examples>\n' + (examples || '(no examples)') + '\n</style_examples>';
 }
 
 function writeParams(settings, p, styleExamples, brochureBase64, feedback) {
@@ -644,23 +667,38 @@ function containsWord(text, word) {
   return new RegExp('(^|[^\u0590-\u05FF])' + esc + '(?=$|[^\u0590-\u05FF])').test(text);
 }
 
+// The full description on the site: the paragraphs and the list of uses.
+function descriptionParts(c) {
+  return (c.description_paragraphs || []).concat(c.usage || []);
+}
+
 function validateContent(c, avoidWords) {
   var problems = [];
-  ['name', 'short_description', 'overview'].forEach(function (k) { if (!String(c[k] || '').trim()) problems.push('missing ' + k); });
+  ['name', 'short_description'].forEach(function (k) { if (!String(c[k] || '').trim()) problems.push('missing ' + k); });
+  if (!(c.description_paragraphs || []).some(function (x) { return String(x).trim(); })) problems.push('missing description_paragraphs');
   var s = wordCount(c.short_description);
   if (s > SHORT_MAX_WORDS) problems.push('short_description has ' + s + ' words (max ' + SHORT_MAX_WORDS + ')');
-  var parts = [c.overview].concat(c.usage || [], c.features || [], (c.specs || []).map(function (x) { return x.name + ' ' + x.value; }));
-  var f = parts.reduce(function (n, x) { return n + wordCount(x); }, 0);
-  if (f > FULL_MAX_WORDS) problems.push('full description (overview+usage+features+specs) has ' + f + ' words (max ' + FULL_MAX_WORDS + ')');
-  if (!/[\u0590-\u05FF]/.test(String(c.short_description) + String(c.overview))) problems.push('texts are not in Hebrew');
-  var all = [c.name, c.short_description, c.overview].concat(c.usage || [], c.features || [], (c.specs || []).map(function (x) { return x.name; })).join('\n');
+  var f = descriptionParts(c).reduce(function (n, x) { return n + wordCount(x); }, 0);
+  if (f > FULL_MAX_WORDS) problems.push('full description (description_paragraphs + usage) has ' + f + ' words (max ' + FULL_MAX_WORDS + ')');
+  if (!/[\u0590-\u05FF]/.test(String(c.short_description) + (c.description_paragraphs || []).join(' '))) problems.push('texts are not in Hebrew');
+  if (String(c.seo_title || '').length > 80) problems.push('seo_title has ' + String(c.seo_title).length + ' characters (max 60)');
+  if (String(c.meta_description || '').length > 200) problems.push('meta_description has ' + String(c.meta_description).length + ' characters (max 155)');
+  var all = [c.name, c.short_description, c.seo_title, c.meta_description].concat(descriptionParts(c), c.tags || []).join('\n');
   var used = (avoidWords || []).filter(function (w) { return containsWord(all, w); });
   if (used.length) problems.push('uses words from <avoid_words>: ' + used.join(', ') + ' - rewrite those sentences');
   return problems;
 }
 
+// Small things fixed without asking Claude again.
+function tidyContent(c, categories) {
+  c.slug = String(c.slug || '').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
+  c.tags = (c.tags || []).map(function (t) { return String(t).trim(); }).filter(String).slice(0, 8);
+  if (categories && categories.length && categories.indexOf(c.category) < 0) c.category = '';
+  return c;
+}
+
 // ======================================== Output.gs ========================================
-// Output: one Drive folder per product with a CSV table (all the text, the HTML page and the links),
+// Output: one Drive folder per product with a CSV table (the site's product fields, links and notes),
 // 3-5 images in "תמונות", the brochure and the user manual; plus one CSV of all products in the main folder.
 
 function esc(s) {
@@ -733,6 +771,8 @@ function jsonLd(p) {
     brand: { '@type': 'Brand', name: p.research.manufacturer },
     manufacturer: { '@type': 'Organization', name: p.research.manufacturer, url: p.research.official_domains[0] ? 'https://' + p.research.official_domains[0] : undefined },
     description: c.short_description,
+    category: c.category || undefined,
+    keywords: (c.tags || []).join(', ') || undefined,
     url: p.productPages.filter(function (x) { return x.official; }).concat(p.productPages)[0].url,
     image: p.saved.images.map(function (i) { return i.file; }),
     subjectOf: p.saved.videos.map(function (v) { return { '@type': 'VideoObject', name: v.title || c.name, url: v.url, embedUrl: v.url }; })
@@ -745,8 +785,7 @@ function jsonLd(p) {
 function productHtml(p) {
   var c = p.content;
   var list = function (items) { return (items || []).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('\n'); };
-  var paras = String(c.overview || '').split(/\n\s*\n|\n/).filter(function (s) { return s.trim(); })
-    .map(function (s) { return '<p>' + esc(s.trim()) + '</p>'; }).join('\n');
+  var paras = (c.description_paragraphs || []).filter(function (x) { return String(x).trim(); }).map(function (x) { return '<p>' + esc(String(x).trim()) + '</p>'; }).join('\n');
   var specs = (c.specs || []).map(function (s) { return '<tr><th scope="row">' + esc(s.name) + '</th><td dir="auto">' + esc(s.value) + '</td></tr>'; }).join('\n');
   var videos = p.saved.videos.map(function (v) { return '<li><a href="' + esc(v.url) + '" class="ltr">' + esc(v.title || v.url) + '</a></li>'; }).join('\n');
   var images = p.saved.images.map(function (im, n) {
@@ -761,7 +800,8 @@ function productHtml(p) {
   }).join('\n');
   return '<!doctype html>\n<html lang="he" dir="rtl">\n<head>\n<meta charset="utf-8">\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
-    '<title>' + esc(c.name) + '</title>\n<meta name="description" content="' + esc(c.short_description) + '">\n' +
+    '<title>' + esc(c.seo_title || c.name) + '</title>\n<meta name="description" content="' + esc(c.meta_description || c.short_description) + '">\n' +
+    '<meta name="keywords" content="' + esc([c.focus_keyphrase].concat(c.tags || []).filter(String).join(', ')) + '">\n' +
     '<script type="application/ld+json">' + JSON.stringify(jsonLd(p), null, 1).replace(/</g, '\\u003c') + '</script>\n<style>' + PAGE_CSS + '</style>\n' +
     '</head>\n<body>\n' +
     '<article itemscope itemtype="https://schema.org/Product" data-manufacturer="' + esc(p.research.manufacturer) + '" data-model="' + esc(p.research.model) + '">\n' +
@@ -769,9 +809,8 @@ function productHtml(p) {
     '<p class="meta">יצרן: <span itemprop="brand">' + esc(p.research.manufacturer) + '</span> · דגם: <span class="ltr">' + esc(p.research.model) + '</span></p>\n</header>\n\n' +
     '<section id="short-description">\n<h2>תיאור קצר</h2>\n<p itemprop="description">' + esc(c.short_description) + '</p>\n</section>\n\n' +
     '<section id="full-description">\n<h2>תיאור מלא</h2>\n' +
-    '<section id="overview">\n<h3>סקירה כללית</h3>\n' + paras + '\n</section>\n' +
-    (c.usage && c.usage.length ? '<section id="usage">\n<h3>שימושים ואופן שימוש</h3>\n<ul>\n' + list(c.usage) + '\n</ul>\n</section>\n' : '') +
-    (c.features && c.features.length ? '<section id="features">\n<h3>תכונות עיקריות</h3>\n<ul>\n' + list(c.features) + '\n</ul>\n</section>\n' : '') +
+    '<section id="overview">\n' + paras + '\n</section>\n' +
+    (c.usage && c.usage.length ? '<section id="usage">\n<h3>שימושים</h3>\n<ul>\n' + list(c.usage) + '\n</ul>\n</section>\n' : '') +
     (specs ? '<section id="specifications">\n<h3>מפרט טכני</h3>\n<table>\n<tbody>\n' + specs + '\n</tbody>\n</table>\n</section>\n' : '') +
     '</section>\n\n' +
     '<section id="videos">\n<h2>סרטוני הדגמה ב-YouTube</h2>\n' + (videos ? '<ul>\n' + videos + '\n</ul>' : NOT_FOUND) + '\n</section>\n\n' +
@@ -785,26 +824,36 @@ function productHtml(p) {
 // ---------- CSV (opens in Excel and Google Sheets) ----------
 
 var ALL_PRODUCTS_CSV = 'כל המוצרים.csv';
-var CSV_HEADERS = ['מזהה', 'שם המוצר', 'יצרן', 'דגם', 'תיאור קצר', 'תיאור מלא', 'שימושים ואופן שימוש', 'תכונות עיקריות', 'מפרט טכני',
-  'סרטוני YouTube', 'ברושור (בדרייב)', 'ברושור (באתר היצרן)', 'מדריך למשתמש (בדרייב)', 'מדריך למשתמש (באתר היצרן)', 'תמונות',
-  'דף המוצר באתר היצרן', 'דף המוצר באתר הספק', 'תיקייה בדרייב', 'הערות', 'HTML'];
+// In the order of the site's "add product" screen, then extra columns for reference.
+var CSV_HEADERS = ['שם מוצר', 'תיאור המוצר (HTML)', 'תיאור קצר של המוצר', 'תמונת מוצר', 'גלריית תמונות מוצר', 'קטגוריה', 'תגיות', 'מותג',
+  'ביטוי מפתח (Yoast)', 'כותרת SEO', 'סלאג', 'תיאור מטא', 'קטלוג pdf', 'ספר הוראות', 'וידאו מוצר',
+  'מזהה', 'דגם', 'מפרט טכני (לעיון)', 'סרטונים נוספים', 'ברושור (בדרייב)', 'מדריך למשתמש (בדרייב)',
+  'דף המוצר באתר היצרן', 'דף המוצר באתר הספק', 'תיקייה בדרייב', 'הערות', 'דף מלא ל-LLM (HTML)'];
+var CSV_ID = CSV_HEADERS.indexOf('מזהה');
 var CSV_CELL_MAX = 32000;   // Excel's limit per cell is 32,767 characters
+
+// "תיאור המוצר" on the site: paragraphs, then the list of uses. Paste it in the editor's Code tab.
+function siteDescriptionHtml(c) {
+  var paras = (c.description_paragraphs || []).map(function (x) { return String(x).trim(); }).filter(String).map(function (x) { return '<p>' + esc(x) + '</p>'; });
+  var uses = (c.usage || []).map(function (x) { return String(x).trim(); }).filter(String);
+  return paras.join('\n') + (uses.length ? '\n<ul>\n' + uses.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('\n') + '\n</ul>' : '');
+}
 
 // One product as a table row, in the order of CSV_HEADERS.
 function productRow(p, stem, folderUrl) {
   var c = p.content;
-  var lines = function (items) { return (items || []).map(function (x) { return '• ' + x; }).join('\n'); };
   var doc = function (kind, key) { var d = p.saved.docs.filter(function (x) { return x.kind === kind; })[0]; return d ? d[key] || '' : ''; };
   var page = function (official) { return p.productPages.filter(function (x) { return !!x.official === official; }).map(function (x) { return x.url; }).join('\n'); };
+  var imgs = p.saved.images.map(function (im) { return im.file.split('/').pop(); });
   var html = productHtml(p);
   if (html.length > CSV_CELL_MAX) html = html.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>\n/, '').replace(/<style>[\s\S]*?<\/style>\n/, '');
   return [
-    stem, c.name, p.research.manufacturer, p.research.model, c.short_description,
-    String(c.overview || '').trim(), lines(c.usage), lines(c.features),
-    (c.specs || []).map(function (x) { return x.name + ': ' + x.value; }).join('\n'),
-    p.saved.videos.map(function (v) { return v.url; }).join('\n'),
-    doc('brochure', 'driveUrl'), doc('brochure', 'url'), doc('manual', 'driveUrl'), doc('manual', 'url'),
-    p.saved.images.map(function (im) { return im.file.split('/').pop() + ' (' + im.width + '×' + im.height + ')'; }).join('\n'),
+    c.name, siteDescriptionHtml(c), c.short_description, imgs[0] || '', imgs.slice(1).join(', '), c.category || '', (c.tags || []).join(', '),
+    p.research.manufacturer, c.focus_keyphrase || '', c.seo_title || '', c.slug || '', c.meta_description || '',
+    doc('brochure', 'url'), doc('manual', 'url'), (p.saved.videos[0] || {}).url || '',
+    stem, p.research.model, (c.specs || []).map(function (x) { return x.name + ': ' + x.value; }).join('\n'),
+    p.saved.videos.slice(1).map(function (v) { return v.url; }).join('\n'),
+    doc('brochure', 'driveUrl'), doc('manual', 'driveUrl'),
     page(true), page(false), folderUrl, p.warnings.join('\n'), html,
   ];
 }
@@ -848,8 +897,13 @@ function csvBlob(rows, name) {
 // The main folder's table: one row per product, a product that runs again replaces its row.
 function updateAllProductsCsv(root, row) {
   var file = firstLive(root.getFilesByName(ALL_PRODUCTS_CSV));
-  var rows = file ? parseCsv(file.getBlob().getDataAsString('UTF-8')).slice(1) : [];
-  rows = rows.filter(function (r) { return r[0] !== row[0]; });
+  var old = file ? parseCsv(file.getBlob().getDataAsString('UTF-8')) : [];
+  // Rows written by an older version (other columns) are moved to the current columns by name.
+  var at = (old[0] || []).map(function (h) { return { 'שם המוצר': 'שם מוצר', 'תיאור קצר': 'תיאור קצר של המוצר', 'יצרן': 'מותג', 'HTML': 'דף מלא ל-LLM (HTML)' }[h] || h; });
+  var rows = old.slice(1).map(function (r) {
+    return CSV_HEADERS.map(function (h) { var k = at.indexOf(h); return k < 0 ? '' : r[k] || ''; });
+  });
+  rows = rows.filter(function (r) { return r[CSV_ID] !== row[CSV_ID]; });
   rows.push(row);
   var content = toCsv([CSV_HEADERS].concat(rows));
   if (file) return file.setContent(content);
@@ -1607,6 +1661,28 @@ function styleExamples(settings) {
   return out;
 }
 
+// The product categories that exist on the site (WooCommerce's public Store API), so Claude picks one of them.
+var CATEGORIES_MEMO = null;
+function siteCategories(settings) {
+  if (CATEGORIES_MEMO) return CATEGORIES_MEMO;
+  CATEGORIES_MEMO = [];
+  if (!settings.site) return CATEGORIES_MEMO;
+  var cache = CacheService.getScriptCache();
+  var key = 'cats_' + Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.MD5, settings.site));
+  var hit = cache.get(key);
+  if (hit) return (CATEGORIES_MEMO = JSON.parse(hit));
+  try {
+    var r = UrlFetchApp.fetch(settings.site.replace(/\/+$/, '') + '/wp-json/wc/store/v1/products/categories?per_page=100', { muteHttpExceptions: true });
+    if (r.getResponseCode() === 200) {
+      CATEGORIES_MEMO = JSON.parse(r.getContentText()).map(function (x) { return decodeEntities(String(x.name || '')).trim(); }).filter(String);
+      cache.put(key, JSON.stringify(CATEGORIES_MEMO), 21600);
+    }
+  } catch (e) {
+    console.warn('categories not read: ' + e.message);
+  }
+  return CATEGORIES_MEMO;
+}
+
 var MAX_POLL_FAILURES = 10;
 
 function pollBatches(settings) {
@@ -1733,6 +1809,7 @@ function applyWrite(p, result) {
     if (p.writeAttempts < MAX_WRITE_ATTEMPTS) { p.stage = 'write_pending'; return; }
     throw new Error('Claude returned invalid JSON');
   }
+  tidyContent(content, siteCategories(readSettings()));
   var problems = validateContent(content, readSettings().avoidWords);
   if (problems.length && p.writeAttempts < MAX_WRITE_ATTEMPTS) {
     p.writeFeedback = '\n\nבטיוטה הקודמת היו הבעיות הבאות - תקן/י:\n- ' + problems.join('\n- ') + '\nהטיוטה הקודמת:\n' + JSON.stringify(content);
@@ -2059,6 +2136,11 @@ var APP_HTML = `<!doctype html>
             <button type="button" data-v="claude-sonnet-5">Sonnet<small>מומלץ</small></button>
             <button type="button" data-v="claude-opus-5">Opus<small>חזק יותר · פי 2.5 במחיר</small></button>
           </div>
+        </div>
+        <div class="field">
+          <label for="s-site">האתר שלכם</label>
+          <input id="s-site" data-key="אתר" placeholder="https://www.ndt24.co.il">
+          <p class="hint">משם נלקחת רשימת הקטגוריות.</p>
         </div>
         <div class="field">
           <label for="s-folder">תיקייה בדרייב</label>

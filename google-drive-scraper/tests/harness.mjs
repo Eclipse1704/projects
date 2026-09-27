@@ -23,7 +23,7 @@ export function loadProject(fetchHandler, { apiKey = "sk-test", fast = FAST } = 
   const code = readdirSync(ROOT).filter((f) => f.endsWith(".gs")).map((f) => readFileSync(path.join(ROOT, f), "utf8")).join("\n;\n");
   vm.runInContext(code, ctx);
   // Every trigger run / menu click is a fresh execution: module-level caches start empty.
-  const fresh = () => vm.runInContext("SETTINGS_MEMO = null; FOLDER_MEMO = {}; ITEMS_MEMO = null; ITEMS_DIRTY = false; BIG_SEEN = {};", ctx);
+  const fresh = () => vm.runInContext("SETTINGS_MEMO = null; CATEGORIES_MEMO = null; FOLDER_MEMO = {}; ITEMS_MEMO = null; ITEMS_DIRTY = false; BIG_SEEN = {};", ctx);
   const run = (fn, ...args) => { fresh(); return ctx[fn](...args); };
   run("doGet");
   if (apiKey) g.userProps.setProperty("ANTHROPIC_API_KEY", apiKey);
@@ -103,6 +103,7 @@ export function fakeClaude(answer, { key = "sk-test", pollsUntilEnded = 1, failC
 export const text = (t) => ({ content: [{ type: "text", text: t }], stop_reason: "end_turn" });
 export const researchJson = (o) => text("```json\n" + JSON.stringify(o) + "\n```");
 export const hebrew = (extra = {}) => text(JSON.stringify({
-  name: "מוצר לדוגמה", short_description: "תיאור קצר של המוצר.", overview: "סקירה.", usage: ["שימוש"], features: ["תכונה"],
-  specs: [], image_indexes: [], brochure_index: -1, manual_index: -1, video_indexes: [], ...extra,
+  name: "מוצר לדוגמה", short_description: "תיאור קצר של המוצר.", description_paragraphs: ["סקירה."], usage: ["שימוש"],
+  specs: [], category: "", tags: ["תגית"], focus_keyphrase: "מוצר לדוגמה", seo_title: "מוצר לדוגמה", meta_description: "תיאור מטא.", slug: "sample",
+  image_indexes: [], brochure_index: -1, manual_index: -1, video_indexes: [], ...extra,
 }));

@@ -1,4 +1,4 @@
-// Output: one Drive folder per product with a CSV table (all the text, the HTML page and the links),
+// Output: one Drive folder per product with a CSV table (the site's product fields, links and notes),
 // 3-5 images in "תמונות", the brochure and the user manual; plus one CSV of all products in the main folder.
 
 function esc(s) {
@@ -71,6 +71,8 @@ function jsonLd(p) {
     brand: { '@type': 'Brand', name: p.research.manufacturer },
     manufacturer: { '@type': 'Organization', name: p.research.manufacturer, url: p.research.official_domains[0] ? 'https://' + p.research.official_domains[0] : undefined },
     description: c.short_description,
+    category: c.category || undefined,
+    keywords: (c.tags || []).join(', ') || undefined,
     url: p.productPages.filter(function (x) { return x.official; }).concat(p.productPages)[0].url,
     image: p.saved.images.map(function (i) { return i.file; }),
     subjectOf: p.saved.videos.map(function (v) { return { '@type': 'VideoObject', name: v.title || c.name, url: v.url, embedUrl: v.url }; })
@@ -83,8 +85,7 @@ function jsonLd(p) {
 function productHtml(p) {
   var c = p.content;
   var list = function (items) { return (items || []).map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('\n'); };
-  var paras = String(c.overview || '').split(/\n\s*\n|\n/).filter(function (s) { return s.trim(); })
-    .map(function (s) { return '<p>' + esc(s.trim()) + '</p>'; }).join('\n');
+  var paras = (c.description_paragraphs || []).filter(function (x) { return String(x).trim(); }).map(function (x) { return '<p>' + esc(String(x).trim()) + '</p>'; }).join('\n');
   var specs = (c.specs || []).map(function (s) { return '<tr><th scope="row">' + esc(s.name) + '</th><td dir="auto">' + esc(s.value) + '</td></tr>'; }).join('\n');
   var videos = p.saved.videos.map(function (v) { return '<li><a href="' + esc(v.url) + '" class="ltr">' + esc(v.title || v.url) + '</a></li>'; }).join('\n');
   var images = p.saved.images.map(function (im, n) {
@@ -99,7 +100,8 @@ function productHtml(p) {
   }).join('\n');
   return '<!doctype html>\n<html lang="he" dir="rtl">\n<head>\n<meta charset="utf-8">\n' +
     '<meta name="viewport" content="width=device-width, initial-scale=1">\n' +
-    '<title>' + esc(c.name) + '</title>\n<meta name="description" content="' + esc(c.short_description) + '">\n' +
+    '<title>' + esc(c.seo_title || c.name) + '</title>\n<meta name="description" content="' + esc(c.meta_description || c.short_description) + '">\n' +
+    '<meta name="keywords" content="' + esc([c.focus_keyphrase].concat(c.tags || []).filter(String).join(', ')) + '">\n' +
     '<script type="application/ld+json">' + JSON.stringify(jsonLd(p), null, 1).replace(/</g, '\\u003c') + '</script>\n<style>' + PAGE_CSS + '</style>\n' +
     '</head>\n<body>\n' +
     '<article itemscope itemtype="https://schema.org/Product" data-manufacturer="' + esc(p.research.manufacturer) + '" data-model="' + esc(p.research.model) + '">\n' +
@@ -107,9 +109,8 @@ function productHtml(p) {
     '<p class="meta">יצרן: <span itemprop="brand">' + esc(p.research.manufacturer) + '</span> · דגם: <span class="ltr">' + esc(p.research.model) + '</span></p>\n</header>\n\n' +
     '<section id="short-description">\n<h2>תיאור קצר</h2>\n<p itemprop="description">' + esc(c.short_description) + '</p>\n</section>\n\n' +
     '<section id="full-description">\n<h2>תיאור מלא</h2>\n' +
-    '<section id="overview">\n<h3>סקירה כללית</h3>\n' + paras + '\n</section>\n' +
-    (c.usage && c.usage.length ? '<section id="usage">\n<h3>שימושים ואופן שימוש</h3>\n<ul>\n' + list(c.usage) + '\n</ul>\n</section>\n' : '') +
-    (c.features && c.features.length ? '<section id="features">\n<h3>תכונות עיקריות</h3>\n<ul>\n' + list(c.features) + '\n</ul>\n</section>\n' : '') +
+    '<section id="overview">\n' + paras + '\n</section>\n' +
+    (c.usage && c.usage.length ? '<section id="usage">\n<h3>שימושים</h3>\n<ul>\n' + list(c.usage) + '\n</ul>\n</section>\n' : '') +
     (specs ? '<section id="specifications">\n<h3>מפרט טכני</h3>\n<table>\n<tbody>\n' + specs + '\n</tbody>\n</table>\n</section>\n' : '') +
     '</section>\n\n' +
     '<section id="videos">\n<h2>סרטוני הדגמה ב-YouTube</h2>\n' + (videos ? '<ul>\n' + videos + '\n</ul>' : NOT_FOUND) + '\n</section>\n\n' +
@@ -123,26 +124,36 @@ function productHtml(p) {
 // ---------- CSV (opens in Excel and Google Sheets) ----------
 
 var ALL_PRODUCTS_CSV = 'כל המוצרים.csv';
-var CSV_HEADERS = ['מזהה', 'שם המוצר', 'יצרן', 'דגם', 'תיאור קצר', 'תיאור מלא', 'שימושים ואופן שימוש', 'תכונות עיקריות', 'מפרט טכני',
-  'סרטוני YouTube', 'ברושור (בדרייב)', 'ברושור (באתר היצרן)', 'מדריך למשתמש (בדרייב)', 'מדריך למשתמש (באתר היצרן)', 'תמונות',
-  'דף המוצר באתר היצרן', 'דף המוצר באתר הספק', 'תיקייה בדרייב', 'הערות', 'HTML'];
+// In the order of the site's "add product" screen, then extra columns for reference.
+var CSV_HEADERS = ['שם מוצר', 'תיאור המוצר (HTML)', 'תיאור קצר של המוצר', 'תמונת מוצר', 'גלריית תמונות מוצר', 'קטגוריה', 'תגיות', 'מותג',
+  'ביטוי מפתח (Yoast)', 'כותרת SEO', 'סלאג', 'תיאור מטא', 'קטלוג pdf', 'ספר הוראות', 'וידאו מוצר',
+  'מזהה', 'דגם', 'מפרט טכני (לעיון)', 'סרטונים נוספים', 'ברושור (בדרייב)', 'מדריך למשתמש (בדרייב)',
+  'דף המוצר באתר היצרן', 'דף המוצר באתר הספק', 'תיקייה בדרייב', 'הערות', 'דף מלא ל-LLM (HTML)'];
+var CSV_ID = CSV_HEADERS.indexOf('מזהה');
 var CSV_CELL_MAX = 32000;   // Excel's limit per cell is 32,767 characters
+
+// "תיאור המוצר" on the site: paragraphs, then the list of uses. Paste it in the editor's Code tab.
+function siteDescriptionHtml(c) {
+  var paras = (c.description_paragraphs || []).map(function (x) { return String(x).trim(); }).filter(String).map(function (x) { return '<p>' + esc(x) + '</p>'; });
+  var uses = (c.usage || []).map(function (x) { return String(x).trim(); }).filter(String);
+  return paras.join('\n') + (uses.length ? '\n<ul>\n' + uses.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('\n') + '\n</ul>' : '');
+}
 
 // One product as a table row, in the order of CSV_HEADERS.
 function productRow(p, stem, folderUrl) {
   var c = p.content;
-  var lines = function (items) { return (items || []).map(function (x) { return '• ' + x; }).join('\n'); };
   var doc = function (kind, key) { var d = p.saved.docs.filter(function (x) { return x.kind === kind; })[0]; return d ? d[key] || '' : ''; };
   var page = function (official) { return p.productPages.filter(function (x) { return !!x.official === official; }).map(function (x) { return x.url; }).join('\n'); };
+  var imgs = p.saved.images.map(function (im) { return im.file.split('/').pop(); });
   var html = productHtml(p);
   if (html.length > CSV_CELL_MAX) html = html.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>\n/, '').replace(/<style>[\s\S]*?<\/style>\n/, '');
   return [
-    stem, c.name, p.research.manufacturer, p.research.model, c.short_description,
-    String(c.overview || '').trim(), lines(c.usage), lines(c.features),
-    (c.specs || []).map(function (x) { return x.name + ': ' + x.value; }).join('\n'),
-    p.saved.videos.map(function (v) { return v.url; }).join('\n'),
-    doc('brochure', 'driveUrl'), doc('brochure', 'url'), doc('manual', 'driveUrl'), doc('manual', 'url'),
-    p.saved.images.map(function (im) { return im.file.split('/').pop() + ' (' + im.width + '×' + im.height + ')'; }).join('\n'),
+    c.name, siteDescriptionHtml(c), c.short_description, imgs[0] || '', imgs.slice(1).join(', '), c.category || '', (c.tags || []).join(', '),
+    p.research.manufacturer, c.focus_keyphrase || '', c.seo_title || '', c.slug || '', c.meta_description || '',
+    doc('brochure', 'url'), doc('manual', 'url'), (p.saved.videos[0] || {}).url || '',
+    stem, p.research.model, (c.specs || []).map(function (x) { return x.name + ': ' + x.value; }).join('\n'),
+    p.saved.videos.slice(1).map(function (v) { return v.url; }).join('\n'),
+    doc('brochure', 'driveUrl'), doc('manual', 'driveUrl'),
     page(true), page(false), folderUrl, p.warnings.join('\n'), html,
   ];
 }
@@ -186,8 +197,13 @@ function csvBlob(rows, name) {
 // The main folder's table: one row per product, a product that runs again replaces its row.
 function updateAllProductsCsv(root, row) {
   var file = firstLive(root.getFilesByName(ALL_PRODUCTS_CSV));
-  var rows = file ? parseCsv(file.getBlob().getDataAsString('UTF-8')).slice(1) : [];
-  rows = rows.filter(function (r) { return r[0] !== row[0]; });
+  var old = file ? parseCsv(file.getBlob().getDataAsString('UTF-8')) : [];
+  // Rows written by an older version (other columns) are moved to the current columns by name.
+  var at = (old[0] || []).map(function (h) { return { 'שם המוצר': 'שם מוצר', 'תיאור קצר': 'תיאור קצר של המוצר', 'יצרן': 'מותג', 'HTML': 'דף מלא ל-LLM (HTML)' }[h] || h; });
+  var rows = old.slice(1).map(function (r) {
+    return CSV_HEADERS.map(function (h) { var k = at.indexOf(h); return k < 0 ? '' : r[k] || ''; });
+  });
+  rows = rows.filter(function (r) { return r[CSV_ID] !== row[CSV_ID]; });
   rows.push(row);
   var content = toCsv([CSV_HEADERS].concat(rows));
   if (file) return file.setContent(content);

@@ -29,6 +29,7 @@ const IMG = {
 const html = (body) => ({ body: `<!doctype html><html><head><title>t</title></head><body>${body}</body></html>` });
 
 const SITES = {
+  "www.ndt24.co.il/wp-json/wc/store/v1/products/categories?per_page=100": { body: [{ id: 1, name: "וידאוסקופים" }, { id: 2, name: "מצלמות תרמיות &amp; אביזרים" }], type: "application/json" },
   "supplier.test/product/x2000": html(`<nav><a href="/">Home</a></nav><main><h1>X2000 Videoscope</h1>
     <p>${"Distributor text about the X2000. ".repeat(20)}</p><img src="/img/dist.jpg" alt="x2000">
     <a href="/files/x2000-brochure.pdf">Brochure</a> <a href="https://maker.test/product/x2000/">Manufacturer page</a></main>`),
@@ -86,8 +87,12 @@ function write(params) {
   let short = `${model} - מכשיר מקצועי לבדיקה.`;
   if (model === "X2000" && x2000Writes++ === 0) short = "מילה ".repeat(90); // too long -> must be retried
   const content = {
-    name: `מוצר ${model}`, short_description: short, overview: "סקירה של המוצר.\n\nפסקה שנייה.",
-    usage: ["שימוש ראשון"], features: ["תכונה"], specs: [{ name: "הגנה", value: "IP54" }],
+    name: `מוצר ${model}`, short_description: short, description_paragraphs: ["סקירה של המוצר.", "פסקה שנייה עם נתונים: IP54."],
+    usage: ["שימוש ראשון", "שימוש שני"], specs: [{ name: "הגנה", value: "IP54" }],
+    // A category that exists on the site, and one that doesn't (must be left empty).
+    category: /226/i.test(model) ? "קטגוריה שלא קיימת" : "וידאוסקופים", tags: ["וידאוסקופ", "Mitcorp"],
+    focus_keyphrase: "וידאוסקופ " + model, seo_title: "וידאוסקופ " + model + " | NDT24", meta_description: "וידאוסקופ תעשייתי " + model + " לבדיקה חזותית.",
+    slug: "Mitcorp " + model + " Videoscope!",
     image_indexes: imgs.filter((i) => !/logo/.test(i[1])).map((i) => +i[0]).slice(0, 4),
     brochure_index: idx(/datasheet|brochure/i), manual_index: idx(/manual/i), video_indexes: listed("videos").map((v) => +v[0]),
   };
@@ -148,7 +153,7 @@ const FAST = process.env.FAST === "1";
 g.userProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
 g.userProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
 ctx.appSaveSettings({ ...ctx.appGetSettings().values, "מצב מהיר": FAST ? "כן" : "לא" });
-const reset = () => vm.runInContext("SETTINGS_MEMO = null; FOLDER_MEMO = {}; ITEMS_MEMO = null; ITEMS_DIRTY = false; BIG_SEEN = {};", ctx);
+const reset = () => vm.runInContext("SETTINGS_MEMO = null; CATEGORIES_MEMO = null; FOLDER_MEMO = {}; ITEMS_MEMO = null; ITEMS_DIRTY = false; BIG_SEEN = {};", ctx);
 reset();
 const started = ctx.appStart(["https://supplier.test/product/x2000", "https://thermo.test/products/thermal-226s", "https://supplier.test/product/broken"].join("\n"));
 assert.equal(started.ok, true, started.message);
@@ -192,18 +197,28 @@ assert.ok(csvText.startsWith("\uFEFF"), "no BOM: Excel would show gibberish inst
 const table = ctx.parseCsv(csvText);
 assert.equal(table.length, 2);
 const col = (name) => table[1][table[0].indexOf(name)];
-assert.equal(col("שם המוצר"), "מוצר X2000");
-assert.equal(col("יצרן"), "Mitcorp");
-assert.ok(col("תיאור קצר") && col("תיאור מלא") && col("מפרט טכני").includes(":"), "text columns empty");
-assert.match(col("סרטוני YouTube"), /watch\?v=AbCdEfGhIjK/);
+// The columns follow the site's "add product" screen.
+assert.deepEqual([...table[0].slice(0, 15)], ["שם מוצר", "תיאור המוצר (HTML)", "תיאור קצר של המוצר", "תמונת מוצר", "גלריית תמונות מוצר", "קטגוריה", "תגיות", "מותג",
+  "ביטוי מפתח (Yoast)", "כותרת SEO", "סלאג", "תיאור מטא", "קטלוג pdf", "ספר הוראות", "וידאו מוצר"]);
+assert.equal(col("שם מוצר"), "מוצר X2000");
+assert.equal(col("תיאור המוצר (HTML)"), "<p>סקירה של המוצר.</p>\n<p>פסקה שנייה עם נתונים: IP54.</p>\n<ul>\n<li>שימוש ראשון</li>\n<li>שימוש שני</li>\n</ul>");
+assert.ok(col("תיאור קצר של המוצר").startsWith("X2000 - "));
+assert.equal(col("תמונת מוצר"), "MITCORP-X2000-001.jpg");
+assert.equal(col("גלריית תמונות מוצר"), "MITCORP-X2000-002.jpg, MITCORP-X2000-003.jpg");
+assert.equal(col("קטגוריה"), "וידאוסקופים");
+assert.equal(col("תגיות"), "וידאוסקופ, Mitcorp");
+assert.equal(col("מותג"), "Mitcorp");
+assert.equal(col("ביטוי מפתח (Yoast)"), "וידאוסקופ X2000");
+assert.equal(col("סלאג"), "mitcorp-x2000-videoscope");
+assert.match(col("קטלוג pdf"), /^https:\/\/maker\.test\/files\//);
+assert.match(col("ספר הוראות"), /^https:\/\/maker\.test\/files\/.*[Mm]anual/);
+assert.match(col("וידאו מוצר"), /watch\?v=AbCdEfGhIjK/);
 assert.match(col("ברושור (בדרייב)"), /^https:\/\/drive\.google\.com\/file\//);
-assert.match(col("ברושור (באתר היצרן)"), /maker\.test\/files\//);
-assert.match(col("מדריך למשתמש (בדרייב)"), /^https:\/\/drive\.google\.com\/file\//);
-assert.match(col("תמונות"), /MITCORP-X2000-001\.jpg \(2000×1500\)/);
+assert.ok(col("מפרט טכני (לעיון)").includes("הגנה: IP54"));
 assert.equal(col("דף המוצר באתר היצרן"), "https://maker.test/product/x2000/");
 assert.equal(col("דף המוצר באתר הספק"), "https://supplier.test/product/x2000");
 assert.equal(col("תיקייה בדרייב"), x2000Folder.getUrl());
-const page = col("HTML");
+const page = col("דף מלא ל-LLM (HTML)");
 for (const s of ['lang="he" dir="rtl"', 'id="product-name"', 'id="short-description"', 'id="full-description"', 'id="usage"', 'id="specifications"',
   "watch?v=AbCdEfGhIjK", 'src="תמונות/MITCORP-X2000-001.jpg" width="2000" height="1500"', "2000×1500", 'href="MITCORP-X2000-BROCHURE.pdf"', 'href="MITCORP-X2000-MANUAL.pdf"',
   "https://supplier.test/product/x2000", "(אתר הספק)", "https://maker.test/product/x2000/", "(אתר היצרן הרשמי)", "application/ld+json"]) {
@@ -214,7 +229,9 @@ assert.ok(!page.includes("supplier.test/files") && !page.includes("dist.jpg"), "
 // The main folder has one table with every product.
 if (process.env.DUMP) (await import('node:fs')).writeFileSync(process.env.DUMP, root.files.find((f) => f.getName() === "כל המוצרים.csv").getBlob().getDataAsString());
 const all = ctx.parseCsv(root.files.find((f) => f.getName() === "כל המוצרים.csv" && !f.trashed).getBlob().getDataAsString());
-assert.deepEqual([...all.slice(1).map((r) => r[0])].sort(), ["MITCORP-X1000-PLUS", "MITCORP-X2000", "THERMO-226S"]);
+const idCol = all[0].indexOf("מזהה");
+assert.deepEqual([...all.slice(1).map((r) => r[idCol])].sort(), ["MITCORP-X1000-PLUS", "MITCORP-X2000", "THERMO-226S"]);
+assert.equal(all.find((r) => r[idCol] === "THERMO-226S")[all[0].indexOf("קטגוריה")], "", "a category that isn't on the site was kept");
 assert.ok(all.every((r) => r.length === all[0].length), "rows with a different number of columns");
 
 // Claude usage
@@ -222,6 +239,7 @@ const researchReqs = claudeRequests.filter((r) => r.params.tools);
 assert.deepEqual(researchReqs[0].params.tools.map((t) => t.type), ["web_search_20260209", "web_fetch_20260209"]);
 assert.equal(researchX2000Calls, 2, "pause_turn continued");
 const writes = claudeRequests.filter((r) => r.params.system);
+assert.ok(writes[0].params.system[0].text.includes("וידאוסקופים\nמצלמות תרמיות & אביזרים"), "site categories not in the prompt");
 assert.equal(writes.length, 4, "3 products + 1 retry for the too-long short description");
 assert.ok(writes.some((w) => w.params.messages[0].content.at(-1).text.includes("short_description has 90 words")), "retry got the feedback");
 assert.ok(writes[0].params.system[0].text.includes("מצלמה תרמית מקצועית לאיתור נזילות"), "NDT24 style example in prompt");

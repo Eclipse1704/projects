@@ -4,6 +4,7 @@ var SHORT_MAX_WORDS = 80;
 var FULL_MAX_WORDS = 500;
 
 var DEFAULT_SETTINGS = [
+  ['אתר', 'https://www.ndt24.co.il', 'כתובת האתר שלכם. המערכת קוראת ממנו את רשימת קטגוריות המוצרים'],
   ['תיקייה בדרייב', 'NDT24 - מוצרים', 'שם התיקייה ב-Google Drive שאליה נשמרים המוצרים (תיקייה לכל מוצר)'],
   ['מודל', 'claude-sonnet-5', 'מודל Claude. claude-sonnet-5 = זול (ברירת מחדל). claude-opus-5 = חזק יותר, יקר פי 2.5'],
   ['מצב מהיר', 'כן', 'כן = כל מוצר מוכן תוך דקות (כ-0.4$ למוצר). לא = עבודת רקע, יכול לקחת עד שעה, חצי מחיר (כ-0.2$ למוצר)'],
@@ -42,6 +43,7 @@ function readSettings() {
   if (SETTINGS_MEMO) return SETTINGS_MEMO;
   var map = settingsMap();
   SETTINGS_MEMO = {
+    site: /^https?:\/\//.test(map['אתר']) ? map['אתר'] : '',
     rootFolder: map['תיקייה בדרייב'],
     model: map['מודל'],
     email: map['שליחת מייל בסיום'] !== 'לא',

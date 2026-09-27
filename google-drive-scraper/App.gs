@@ -294,6 +294,11 @@ var APP_HTML = `<!doctype html>
           </div>
         </div>
         <div class="field">
+          <label for="s-site">האתר שלכם</label>
+          <input id="s-site" data-key="אתר" placeholder="https://www.ndt24.co.il">
+          <p class="hint">משם נלקחת רשימת הקטגוריות.</p>
+        </div>
+        <div class="field">
           <label for="s-folder">תיקייה בדרייב</label>
           <input id="s-folder" class="rtl" data-key="תיקייה בדרייב">
         </div>

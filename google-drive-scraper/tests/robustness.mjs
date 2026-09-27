@@ -359,7 +359,7 @@ test("Hebrew quality: a word from 'words we don't use' sends the text back to Cl
   const claude = fakeClaude((params) => {
     if (params.tools) return researchJson(OFFICIAL);
     writes++;
-    return hebrew({ overview: writes === 1 ? "המכשיר הינו פתרון מושלם לאיתור נזילות." : "המכשיר מתאים לאיתור נזילות.", image_indexes: [0, 1, 2] });
+    return hebrew({ description_paragraphs: [writes === 1 ? "המכשיר הינו פתרון מושלם לאיתור נזילות." : "המכשיר מתאים לאיתור נזילות."], image_indexes: [0, 1, 2] });
   });
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
@@ -437,6 +437,23 @@ test("no advanced services needed (install = paste one file); a product runs aga
   assert.equal(table.length, 2, "product added twice to the table");
   const folder = rootOf(p).folders.find((f) => f.name.startsWith("MAKER-A100") && !f.trashed);
   assert.deepEqual(folder.files.filter((f) => !f.trashed && /csv$/.test(f.getName())).length, 1);
+});
+
+test("CSV: a table from the previous version (other columns) keeps its rows, moved to the new columns", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  const root = p.g.myDrive.createFolder("NDT24 - מוצרים");
+  root.createFile("כל המוצרים.csv", p.ctx.toCsv([["מזהה", "שם המוצר", "יצרן", "תיאור קצר"], ["OLD-1", "מוצר ישן", "Old", "קצר"]]), "text/csv");
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.runUntilIdle();
+  const t = p.ctx.parseCsv(root.files.find((f) => f.getName() === "כל המוצרים.csv" && !f.trashed).getBlob().getDataAsString());
+  const h = t[0];
+  assert.equal(t.length, 3);
+  const old = t.find((r) => r[h.indexOf("מזהה")] === "OLD-1");
+  assert.equal(old[h.indexOf("שם מוצר")], "מוצר ישן");
+  assert.equal(old[h.indexOf("מותג")], "Old");
+  assert.equal(old[h.indexOf("תיאור קצר של המוצר")], "קצר");
 });
 
 test("CSV: commas, quotes, new lines and Hebrew survive; formulas are not run by Excel", () => {
@@ -589,7 +606,7 @@ test("app: 'fix the text' sends a finished product back to Claude with the note,
   assert.match(folders[0].name, /מוצר מתוקן/);
   const table = p.ctx.parseCsv(root.files.find((f) => f.getName() === "כל המוצרים.csv" && !f.trashed).getBlob().getDataAsString());
   assert.equal(table.length, 2);
-  assert.equal(table[1][1], "מוצר מתוקן");
+  assert.equal(table[1][0], "מוצר מתוקן");
   assert.ok(!p.g.myDrive.folders.some((f) => f.name === "סריקה 2" && liveFolders(f).length), "fix saved in the new main folder");
   // Fixing again works from the fixed version.
   assert.equal(p.run("appRevise", item.id, "עוד תיקון").ok, true);
