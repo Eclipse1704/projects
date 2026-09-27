@@ -120,7 +120,7 @@ export function makeGoogle({ fetchHandler }) {
       getActive: () => ss,
       getUi: () => ({
         createMenu: () => { const m = { addItem: () => m, addSeparator: () => m, addToUi: () => {} }; return m; },
-        alert: (msg) => alerts.push(msg),
+        alert: (a, b) => alerts.push(b === undefined ? a : a + "\n" + b),
         prompt: () => ({ getSelectedButton: () => "CANCEL", getResponseText: () => "" }),
         ButtonSet: { OK_CANCEL: 1 },
         Button: { OK: "OK" },
@@ -193,6 +193,7 @@ export function makeGoogle({ fetchHandler }) {
       base64Encode: (x) => (typeof x === "string" ? Buffer.from(x, "utf8") : Buffer.from(x.map((b) => b & 255))).toString("base64"),
       computeDigest: (alg, x) => [...createHash("md5").update(typeof x === "string" ? Buffer.from(x, "utf8") : Buffer.from(x.map((b) => b & 255))).digest()].map((b) => (b > 127 ? b - 256 : b)),
       DigestAlgorithm: { MD5: "MD5" },
+      formatDate: (d) => d.toISOString(),
     },
     PropertiesService: { getUserProperties: () => userProps, getScriptProperties: () => scriptProps },
     CacheService: { getScriptCache: () => ({ get: (k) => cache.get(k) ?? null, put: (k, v) => cache.set(k, v) }) },
@@ -203,7 +204,7 @@ export function makeGoogle({ fetchHandler }) {
       deleteTrigger: (t) => { const i = triggers.indexOf(t); if (i >= 0) triggers.splice(i, 1); },
     },
     MailApp: { sendEmail: (to, subject, body) => mails.push({ to, subject, body }) },
-    Session: { getEffectiveUser: () => ({ getEmail: () => "dad@example.com" }) },
+    Session: { getEffectiveUser: () => ({ getEmail: () => "dad@example.com" }), getScriptTimeZone: () => "Asia/Jerusalem" },
     console: { log() {}, warn() {}, error: console.error },
   };
   return { google, sheets, sheetId, myDrive, userProps, scriptProps, triggers, mails, log, alerts };

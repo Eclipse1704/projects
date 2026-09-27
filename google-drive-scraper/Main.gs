@@ -33,6 +33,7 @@ function onOpen() {
   SpreadsheetApp.getUi().createMenu('סורק מוצרים')
     .addItem('▶ הרץ על הקישורים', 'startRun')
     .addItem('הגדרת מפתח API של Claude', 'setApiKey')
+    .addItem('מצב המערכת', 'showStatus')
     .addSeparator()
     .addItem('■ עצור', 'stopRun')
     .addToUi();
@@ -274,7 +275,49 @@ function tick() {
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(1000)) return;
   DEADLINE = Date.now() + TICK_BUDGET_MS;
+  PropertiesService.getScriptProperties().setProperty('LAST_RUN', new Date().toISOString());
   try {
+    work();
+  } catch (e) {
+    reportCrash(e);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// A background run that crashes would otherwise fail silently: show it on the rows and in "מצב המערכת".
+function reportCrash(e) {
+  var msg = String(e && e.message || e);
+  PropertiesService.getScriptProperties().setProperty('LAST_ERROR', new Date().toISOString() + ' ' + msg);
+  try {
+    Object.keys(getStages()).forEach(function (id) {
+      var row = findRow(id);
+      if (row) SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS).getRange(row, COL.NOTES).setValue(asText('תקלה בהרצה ברקע (מנסה שוב כל דקה): ' + msg));
+    });
+  } catch (e2) {}
+}
+
+// Menu: is the background worker running, when did it last run, what went wrong.
+function showStatus() {
+  var props = PropertiesService.getScriptProperties();
+  var stages = getStages();
+  var count = {};
+  Object.keys(stages).forEach(function (id) { count[stages[id]] = (count[stages[id]] || 0) + 1; });
+  var trigger = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; });
+  var fmt = function (iso) { return iso ? Utilities.formatDate(new Date(iso), Session.getScriptTimeZone(), 'dd/MM HH:mm:ss') : 'אף פעם'; };
+  var lastError = props.getProperty('LAST_ERROR') || '';
+  SpreadsheetApp.getUi().alert('מצב המערכת',
+    'עבודה ברקע: ' + (trigger ? 'פעילה ✓' : 'לא פעילה') + '\n' +
+    'הרצה אחרונה: ' + fmt(props.getProperty('LAST_RUN')) + '\n' +
+    'מוצרים בעבודה: ' + (Object.keys(stages).length ? JSON.stringify(count) : 'אין') + '\n' +
+    'מפתח API: ' + (readSettings().apiKey ? 'מוגדר ✓' : 'חסר') + '\n' +
+    'תקלה אחרונה: ' + (lastError ? fmt(lastError.split(' ')[0]) + ' - ' + lastError.slice(lastError.indexOf(' ') + 1) : 'אין'),
+    SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+// Everything one background run does.
+function work() {
+  {
     var settings = readSettings();
     pollBatches(settings);
     recoverLostWaits();
@@ -293,8 +336,6 @@ function tick() {
     var busy = Object.keys(left).some(function (id) { return !/_wait$/.test(left[id]); });
     if (Object.keys(left).length) setTriggerEvery(busy ? 1 : 5);
     finishIfDone(settings);
-  } finally {
-    lock.releaseLock();
   }
 }
 

@@ -413,6 +413,24 @@ test("no advanced services needed (install = paste one file); the readable Googl
   assert.ok(lines.some((l) => l.text === "תיאור קצר") && lines.every((l) => l.kind === "table" || l.rtl), "missing sections or not right-to-left");
 });
 
+test("a background run that crashes shows the error on the rows and in 'מצב המערכת'", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude));
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  const drive = p.ctx.DriveApp;
+  p.ctx.DriveApp = { ...drive, getFoldersByName: () => { throw new Error("Exception: Access denied: DriveApp."); } };
+  p.run("tick");
+  p.run("showStatus");
+  p.ctx.DriveApp = drive;
+  const notes = String(p.rows()[0][5]);
+  assert.ok(/תקלה|שגיאה/.test(notes + p.rows()[0][1]), "nothing shown: " + p.rows()[0][1] + " / " + notes);
+  const status = p.g.alerts.at(-1);
+  assert.match(status, /עבודה ברקע: פעילה/);
+  assert.match(status, /מפתח API: מוגדר/);
+  assert.match(status, /Access denied: DriveApp/);
+});
+
 // ---------- fast mode (direct calls) ----------
 const fastMode = { fast: true };
 
