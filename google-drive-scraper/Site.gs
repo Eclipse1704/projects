@@ -200,6 +200,8 @@ function connectSite(user, pass) {
   try {
     me = siteRequest(test, 'get', '/wp/v2/users/me?context=edit');
   } catch (e) {
+    if (e.code === 'incorrect_password') return 'זו לא סיסמת אפליקציה. צריך את הסיסמה המיוחדת (24 אותיות, בקבוצות של 4) שנוצרת באתר: משתמשים ← הפרופיל שלי ← סיסמאות אפליקציה ← הוספה. לא את הסיסמה שנכנסים איתה לאתר.';
+    if (e.code === 'invalid_username' || e.code === 'invalid_email') return 'שם המשתמש ' + user + ' לא קיים באתר.';
     if (e.status === 401 || e.status === 403) return 'שם המשתמש או סיסמת האפליקציה לא נכונים (' + e.message + '). אם הם נכונים, ייתכן שחברת האחסון או תוסף אבטחה חוסמים חיבורים כאלה - שולחים את ההודעה הזאת למי שמתחזק את האתר.';
     return 'לא הצלחתי להתחבר לאתר: ' + e.message;
   }
