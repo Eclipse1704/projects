@@ -98,7 +98,7 @@ export function makeGoogle({ fetchHandler }) {
   const triggers = [];
   const mails = [];
   const cache = new Map();
-  const log = { fetches: [] };
+  const log = { fetches: [], fetchAlls: [] };
   const alerts = [];
 
   const response = (code, body, headers = {}) => {
@@ -130,12 +130,18 @@ export function makeGoogle({ fetchHandler }) {
           log.fetches.push({ url, method: (opts.method || "get").toLowerCase(), payload: opts.payload, headers: opts.headers });
           const r = fetchHandler(url, opts);
           if (!r) return response(404, "not found");
+          if (r.timeout) throw new Error("Timeout: " + url);   // Apps Script gives up after ~60s
           if (r.location && opts.followRedirects !== false) { url = new URL(r.location, url).href; continue; }   // followed silently, like the real one
           const headers = { "Content-Type": r.type || "text/html; charset=utf-8" };
           if (r.location) headers.Location = r.location;
           return response(r.code || (r.location ? 302 : 200), r.body || "", headers);
         }
         throw new Error("too many redirects");
+      },
+      // Like the real one: all requests together; if any of them fails (e.g. timeout) the whole call throws.
+      fetchAll(reqs) {
+        log.fetchAlls.push(reqs.length);
+        return reqs.map((r) => google.UrlFetchApp.fetch(r.url, r));
       },
     },
     DriveApp: {

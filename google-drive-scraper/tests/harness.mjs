@@ -7,7 +7,15 @@ import { makeGoogle } from "./fake-google.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-export function loadProject(fetchHandler, { apiKey = "sk-test" } = {}) {
+// FAST=1 runs everything in fast mode (direct Claude calls); otherwise batch jobs.
+export const FAST = process.env.FAST === "1";
+
+export function setSetting(sheet, name, value) {
+  for (let r = 2; r <= sheet.getLastRow(); r++) if (sheet.get(r, 1) === name) { sheet.set(r, 2, value); return; }
+  throw new Error("no setting " + name);
+}
+
+export function loadProject(fetchHandler, { apiKey = "sk-test", fast = FAST } = {}) {
   const g = makeGoogle({ fetchHandler });
   const ctx = vm.createContext({ ...g.google, JSON, Date, Math, String, Array, Object, RegExp, Error, parseInt, decodeURIComponent, encodeURIComponent, encodeURI });
   const code = readdirSync(ROOT).filter((f) => f.endsWith(".gs")).map((f) => readFileSync(path.join(ROOT, f), "utf8")).join("\n;\n");
@@ -18,6 +26,7 @@ export function loadProject(fetchHandler, { apiKey = "sk-test" } = {}) {
   run("setup");
   if (apiKey) g.scriptProps.setProperty("ANTHROPIC_API_KEY", apiKey);
   g.scriptProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
+  setSetting(g.sheets.get("הגדרות"), "מצב מהיר", fast ? "כן" : "לא");
   const sheet = g.sheets.get("מוצרים");
   return {
     g, ctx, run, sheet,
@@ -32,10 +41,21 @@ export function loadProject(fetchHandler, { apiKey = "sk-test" } = {}) {
 export function fakeClaude(answer, { key = "sk-test", pollsUntilEnded = 1, failCreate = null } = {}) {
   const batches = new Map();
   const requests = [];
+  const direct = [];
   let creates = 0;
   function handle(url, opts) {
     const u = new URL(url);
     if (opts.headers["x-api-key"] !== key) return { code: 401, body: { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }, type: "application/json" };
+    if (opts.method === "post" && u.pathname === "/v1/messages") {   // direct call (fast mode)
+      const params = JSON.parse(opts.payload);
+      direct.push(params);
+      requests.push({ custom_id: "direct", params });
+      const a = answer(params, { params });
+      if (a.timeout) return { timeout: true };
+      if (a.status) return { code: a.status, body: { type: "error", error: { message: a.error || "error" } }, type: "application/json" };
+      if (a.error) return { code: 400, body: { type: "error", error: { type: "invalid_request_error", message: a.error } }, type: "application/json" };
+      return { body: { type: "message", role: "assistant", content: a.content, stop_reason: a.stop_reason || "end_turn" }, type: "application/json" };
+    }
     if (opts.method === "post" && u.pathname === "/v1/messages/batches") {
       creates++;
       const f = failCreate && failCreate(creates);
@@ -66,7 +86,7 @@ export function fakeClaude(answer, { key = "sk-test", pollsUntilEnded = 1, failC
     }
     return null;
   }
-  return { handle, batches, requests };
+  return { handle, batches, requests, direct };
 }
 
 export const text = (t) => ({ content: [{ type: "text", text: t }], stop_reason: "end_turn" });

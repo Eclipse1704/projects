@@ -245,14 +245,15 @@ function tick() {
     var settings = readSettings();
     pollBatches(settings);
     recoverLostWaits();
-    var stages = getStages();
-    // Local steps (reading pages, saving files) - as many as fit in this run.
-    Object.keys(stages).forEach(function (id) {
-      if (['new', 'official', 'save'].indexOf(stages[id]) < 0 || timeLeft() < STEP_MIN_MS) return;
-      var p = loadState(id);
-      if (p) runLocalStep(settings, p);
-      else forget(id);
-    });
+    // Take every product as far as it can go in this run - all products together, stage after stage.
+    for (var round = 0; round < 10 && timeLeft() > 45000; round++) {
+      var moved = runLocalStage(settings, 'new');
+      if (settings.fast) moved = runClaudeNow(settings, 'research') || moved;
+      moved = runLocalStage(settings, 'official') || moved;
+      if (settings.fast) moved = runClaudeNow(settings, 'write') || moved;
+      moved = runLocalStage(settings, 'save') || moved;
+      if (!moved) break;
+    }
     submitBatches(settings, 'research');
     submitBatches(settings, 'write');
     var left = getStages();
@@ -262,6 +263,130 @@ function tick() {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Runs one local stage for all products in it: their pages/files are downloaded in parallel first.
+var LOCAL_GROUP = { new: 10, official: 5, save: 3 };
+
+function runLocalStage(settings, stage) {
+  var stages = getStages();
+  var ids = Object.keys(stages).filter(function (id) { return stages[id] === stage; });
+  var moved = false;
+  for (var i = 0; i < ids.length && timeLeft() >= STEP_MIN_MS; i += LOCAL_GROUP[stage]) {
+    var group = [];
+    ids.slice(i, i + LOCAL_GROUP[stage]).forEach(function (id) {
+      var p = loadState(id);
+      if (p) group.push(p);
+      else forget(id);
+    });
+    prefetchFor(stage, group);
+    group.forEach(function (p) {
+      if (timeLeft() < STEP_MIN_MS) return;
+      runLocalStep(settings, p);
+      moved = true;
+    });
+    clearPrefetch();
+  }
+  return moved;
+}
+
+function prefetchFor(stage, group) {
+  var noRedirect = { followRedirects: false };
+  if (stage === 'new') {
+    prefetch(group.map(function (p) { return p.link; }), noRedirect);
+  } else if (stage === 'official') {
+    var pages = [];
+    group.forEach(function (p) {
+      var r = p.research || {};
+      if (r.site_is_manufacturer) pages.push(p.link);
+      pages.push(r.official_product_url, r.official_downloads_url);
+    });
+    prefetch(pages, noRedirect);
+  } else if (stage === 'save') {
+    var files = [];
+    group.forEach(function (p) {
+      var c = p.content || {};
+      var off = p.official || { images: [], pdfs: [] };
+      uniqueIndexes(c.image_indexes, off.images.length).slice(0, 8).forEach(function (i) { files.push(off.images[i].url, off.images[i].fallback); });
+      [c.brochure_index, c.manual_index].forEach(function (i) { if (off.pdfs[i]) files.push(off.pdfs[i].url); });
+    });
+    prefetch(files);
+  }
+}
+
+// Fast mode: ask Claude directly (several products at the same time) instead of a batch job.
+var NOW_GROUP = 5;
+var NOW_MIN_MS = 75 * 1000;   // a direct call can take up to ~60s
+
+function runClaudeNow(settings, kind) {
+  var stages = getStages();
+  var ids = Object.keys(stages).filter(function (id) { return stages[id] === kind + '_pending'; });
+  if (!ids.length) return false;
+  var style = kind === 'write' ? styleExamples(settings) : null;
+  var moved = false;
+  var queue = ids.slice();
+  while (queue.length && timeLeft() > NOW_MIN_MS) {
+    var group = [];
+    var params = [];
+    while (queue.length && group.length < NOW_GROUP) {
+      var id = queue.shift();
+      var p = loadState(id);
+      if (!p) { forget(id); continue; }
+      if (p.useBatch && p.useBatch[kind]) continue;   // didn't fit in the time limit before: batch job
+      try {
+        params.push(claudeParams(settings, p, kind, style));
+        group.push(p);
+      } catch (e) {
+        fail(p, e);
+      }
+    }
+    if (!group.length) continue;
+    var answers = claudeNow(settings, params);
+    var m = getStages();
+    group.forEach(function (p, i) {
+      var a = answers[i];
+      if (a.timeout) {
+        p.useBatch = p.useBatch || {};
+        p.useBatch[kind] = true;
+        saveState(p, m);
+        return;
+      }
+      if (a.status === 401 || a.status === 403) {
+        fail(p, new Error(a.message));
+        m = getStages();
+        return;
+      }
+      if (a.status === 408 || a.status === 429 || a.status >= 500) {   // busy: try again, then as a batch job
+        p.nowErrors = (p.nowErrors || 0) + 1;
+        if (p.nowErrors >= 3) { p.useBatch = p.useBatch || {}; p.useBatch[kind] = true; }
+        saveState(p, m);
+        return;
+      }
+      try {
+        if (kind === 'research') applyResearch(p, a.result);
+        else applyWrite(p, a.result);
+        saveState(p, m);
+        moved = true;
+      } catch (e) {
+        fail(p, e);
+        m = getStages();
+      }
+    });
+    setStages(m);
+  }
+  return moved;
+}
+
+// The request for one product, used by both the direct calls and the batch jobs.
+function claudeParams(settings, p, kind, style) {
+  if (kind === 'research') {
+    var params = researchParams(settings, p);
+    if (p.researchContinuation) params.messages = params.messages.concat([p.researchContinuation]);
+    return params;
+  }
+  var brochure = p.skipBrochure ? null : brochureForClaude(p);
+  p.lastWriteHadBrochure = !!brochure;
+  return writeParams(settings, p, style, brochure, p.writeFeedback);
 }
 
 function runLocalStep(settings, p) {
@@ -469,7 +594,7 @@ function submitBatches(settings, kind) {
   var stages = getStages();
   var ids = Object.keys(stages).filter(function (id) { return stages[id] === kind + '_pending'; });
   if (!ids.length || timeLeft() < 30000) return;
-  var style = kind === 'write' ? styleExamples(settings) : null;
+  var style = kind === 'write' ? styleExamples(settings) : null;   // cached for 6 hours
   var requests = [];
   var members = [];
   var size = 0;
@@ -495,16 +620,10 @@ function submitBatches(settings, kind) {
     if (stop || timeLeft() < 30000) return;
     var p = loadState(pid);
     if (!p) { forget(pid); return; }
+    if (settings.fast && !(p.useBatch && p.useBatch[kind])) return;   // fast mode: handled directly
     var params;
     try {
-      if (kind === 'research') {
-        params = researchParams(settings, p);
-        if (p.researchContinuation) params.messages = params.messages.concat([p.researchContinuation]);
-      } else {
-        var brochure = p.skipBrochure ? null : brochureForClaude(p);
-        p.lastWriteHadBrochure = !!brochure;
-        params = writeParams(settings, p, style, brochure, p.writeFeedback);
-      }
+      params = claudeParams(settings, p, kind, style);
     } catch (e) {
       fail(p, e);
       return;

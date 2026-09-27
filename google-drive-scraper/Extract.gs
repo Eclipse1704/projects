@@ -8,18 +8,57 @@ var MANUAL_WORDS = ['manual', 'user guide', 'userguide', 'user-guide', 'instruct
 var BROCHURE_WORDS = ['brochure', 'datasheet', 'data sheet', 'data-sheet', 'catalog', 'catalogue', 'leaflet', 'flyer',
   'prospekt', 'spec sheet', 'specification', 'datenblatt'];
 
-function fetchUrl(url, extra) {
-  // Spaces, Hebrew letters etc. must be percent-encoded (already-encoded %XX stays as is).
-  url = String(url).replace(/[^\x21-\x7e]+/g, function (c) { return encodeURIComponent(c); });
+// Spaces, Hebrew letters etc. must be percent-encoded (already-encoded %XX stays as is).
+function encodeUrl(url) {
+  return String(url).replace(/[^\x21-\x7e]+/g, function (c) { return encodeURIComponent(c); });
+}
+
+function fetchOptions(extra) {
   var opts = { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' } };
   for (var k in (extra || {})) opts[k] = extra[k];
+  return opts;
+}
+
+// Responses downloaded ahead of time by prefetch(), used once by fetchUrl().
+var FETCH_CACHE = {};
+function fetchKey(url, extra) { return url + '|' + (extra && extra.followRedirects === false ? 'no-redirect' : ''); }
+
+function fetchUrl(url, extra) {
+  url = encodeUrl(url);
+  var key = fetchKey(url, extra);
+  if (key in FETCH_CACHE) {
+    var hit = FETCH_CACHE[key];
+    delete FETCH_CACHE[key];
+    return hit;
+  }
   try {
-    var r = UrlFetchApp.fetch(url, opts);
+    var r = UrlFetchApp.fetch(url, fetchOptions(extra));
     return r.getResponseCode() < 400 ? r : null;
   } catch (e) {
     return null;
   }
 }
+
+// Downloads many URLs at the same time (much faster than one by one).
+function prefetch(urls, extra) {
+  var todo = [];
+  (urls || []).forEach(function (u) {
+    if (!u) return;
+    u = encodeUrl(u);
+    if (todo.indexOf(u) < 0 && !(fetchKey(u, extra) in FETCH_CACHE)) todo.push(u);
+  });
+  for (var i = 0; i < todo.length; i += 10) {
+    var chunk = todo.slice(i, i + 10);
+    try {
+      var rs = UrlFetchApp.fetchAll(chunk.map(function (u) { var o = fetchOptions(extra); o.url = u; return o; }));
+      rs.forEach(function (r, j) { FETCH_CACHE[fetchKey(chunk[j], extra)] = r.getResponseCode() < 400 ? r : null; });
+    } catch (e) {
+      // One of them didn't answer in time: the others are fetched one by one when needed.
+    }
+  }
+}
+
+function clearPrefetch() { FETCH_CACHE = {}; }
 
 function hostOf(url) {
   var m = String(url).match(/^https?:\/\/([^\/?#:]+)/i);

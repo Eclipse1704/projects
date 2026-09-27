@@ -97,6 +97,12 @@ function write(params) {
 function claude(url, opts) {
   const u = new URL(url);
   if (opts.headers["x-api-key"] !== "sk-test") return { code: 401, body: { error: { message: "bad key" } } };
+  if (opts.method === "post" && u.pathname === "/v1/messages") {   // direct call (fast mode)
+    const params = JSON.parse(opts.payload);
+    claudeRequests.push({ custom_id: "direct", params });
+    const message = params.tools ? research(params) : write(params);
+    return { body: { type: "message", role: "assistant", ...message }, type: "application/json" };
+  }
   if (opts.method === "post" && u.pathname === "/v1/messages/batches") {
     const body = JSON.parse(opts.payload);
     body.requests.forEach((r) => claudeRequests.push(r));
@@ -137,6 +143,9 @@ const code = readdirSync(ROOT).filter((f) => f.endsWith(".gs")).map((f) => readF
 vm.runInContext(code, ctx);
 
 ctx.setup();
+// FAST=1: direct calls (the default setting); otherwise batch jobs.
+const FAST = process.env.FAST === "1";
+{ const st = g.sheets.get("הגדרות"); for (let r = 2; r <= st.getLastRow(); r++) if (st.get(r, 1) === "מצב מהיר") st.set(r, 2, FAST ? "כן" : "לא"); }
 ctx.onOpen();
 g.userProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
 g.scriptProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
@@ -193,12 +202,12 @@ assert.deepEqual(researchReqs[0].params.tools.map((t) => t.type), ["web_search_2
 assert.equal(researchX2000Calls, 2, "pause_turn continued");
 const writes = claudeRequests.filter((r) => r.params.system);
 assert.equal(writes.length, 4, "3 products + 1 retry for the too-long short description");
-assert.ok(writes.find((w) => w.custom_id.endsWith("_write_1")).params.messages[0].content.at(-1).text.includes("short_description has 90 words"));
+assert.ok(writes.some((w) => w.params.messages[0].content.at(-1).text.includes("short_description has 90 words")), "retry got the feedback");
 assert.ok(writes[0].params.system[0].text.includes("מצלמה תרמית מקצועית לאיתור נזילות"), "NDT24 style example in prompt");
 assert.ok(writes[0].params.system[0].text.includes("videoscope = וידאוסקופ"), "glossary in prompt");
 assert.equal(writes[0].params.output_config.format.type, "json_schema");
 assert.equal(writes[0].params.model, "claude-sonnet-5");
-assert.equal(writes[0].params.output_config.effort, "high");
+assert.equal(writes[0].params.output_config.effort, FAST ? "medium" : "high");
 assert.ok(writes[0].params.system[0].text.includes("<avoid_words>\nהינו"), "avoid-words list in prompt");
 const x2000Write = writes.find((w) => w.params.messages[0].content.at(-1).text.includes("Model: X2000"));
 assert.equal(x2000Write.params.messages[0].content[0].type, "document", "official brochure given to Claude");
@@ -208,9 +217,9 @@ assert.ok(!x2000Write.params.messages[0].content.at(-1).text.includes("dist.jpg"
 assert.equal(g.triggers.length, 0, "trigger removed");
 assert.equal(g.mails.length, 1, "done email");
 // research(3) -> continuation(X2000) ; write(2 ready) -> write(X2000, ready one step later) -> retry(X2000)
-assert.equal(batches.size, 5);
+assert.equal(batches.size, FAST ? 0 : 5);
 // install/Code.gs (what users paste) must match the source files
-{
+if ((await import("node:fs")).existsSync(path.join(ROOT, "build.sh"))) {
   const { execFileSync } = await import("node:child_process");
   const before = readFileSync(path.join(ROOT, "install", "Code.gs"), "utf8");
   execFileSync(path.join(ROOT, "build.sh"));

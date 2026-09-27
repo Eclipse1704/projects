@@ -13,6 +13,7 @@ var FULL_MAX_WORDS = 500;
 var DEFAULT_SETTINGS = [
   ['תיקייה בדרייב', 'NDT24 - מוצרים', 'שם התיקייה ב-Google Drive שאליה נשמרים המוצרים (תיקייה לכל מוצר)'],
   ['מודל', 'claude-sonnet-5', 'מודל Claude. claude-sonnet-5 = זול (ברירת מחדל). claude-opus-5 = חזק יותר, יקר פי 2.5'],
+  ['מצב מהיר', 'כן', 'כן = כל מוצר מוכן תוך דקות (כ-0.4$ למוצר). לא = עבודת רקע, יכול לקחת עד שעה, חצי מחיר (כ-0.2$ למוצר)'],
   ['שליחת מייל בסיום', 'כן', 'כן / לא'],
   ['דפי דוגמה לסגנון', [
     'https://www.ndt24.co.il/product/%D7%9E%D7%A6%D7%9C%D7%9E%D7%94-%D7%AA%D7%A8%D7%9E%D7%99%D7%AA-fotric-348a/',
@@ -58,6 +59,7 @@ function readSettings() {
     rootFolder: map['תיקייה בדרייב'],
     model: map['מודל'],
     email: map['שליחת מייל בסיום'] !== 'לא',
+    fast: map['מצב מהיר'] !== 'לא',
     styleUrls: map['דפי דוגמה לסגנון'].split(/\s+/).filter(function (u) { return /^https?:\/\//.test(u); }),
     glossary: map['מילון מונחים'],
     avoidWords: String(map['מילים שלא משתמשים בהן'] || '').split('\n').map(function (w) { return w.trim(); }).filter(String),

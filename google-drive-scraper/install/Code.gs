@@ -17,6 +17,7 @@ var FULL_MAX_WORDS = 500;
 var DEFAULT_SETTINGS = [
   ['תיקייה בדרייב', 'NDT24 - מוצרים', 'שם התיקייה ב-Google Drive שאליה נשמרים המוצרים (תיקייה לכל מוצר)'],
   ['מודל', 'claude-sonnet-5', 'מודל Claude. claude-sonnet-5 = זול (ברירת מחדל). claude-opus-5 = חזק יותר, יקר פי 2.5'],
+  ['מצב מהיר', 'כן', 'כן = כל מוצר מוכן תוך דקות (כ-0.4$ למוצר). לא = עבודת רקע, יכול לקחת עד שעה, חצי מחיר (כ-0.2$ למוצר)'],
   ['שליחת מייל בסיום', 'כן', 'כן / לא'],
   ['דפי דוגמה לסגנון', [
     'https://www.ndt24.co.il/product/%D7%9E%D7%A6%D7%9C%D7%9E%D7%94-%D7%AA%D7%A8%D7%9E%D7%99%D7%AA-fotric-348a/',
@@ -62,6 +63,7 @@ function readSettings() {
     rootFolder: map['תיקייה בדרייב'],
     model: map['מודל'],
     email: map['שליחת מייל בסיום'] !== 'לא',
+    fast: map['מצב מהיר'] !== 'לא',
     styleUrls: map['דפי דוגמה לסגנון'].split(/\s+/).filter(function (u) { return /^https?:\/\//.test(u); }),
     glossary: map['מילון מונחים'],
     avoidWords: String(map['מילים שלא משתמשים בהן'] || '').split('\n').map(function (w) { return w.trim(); }).filter(String),
@@ -83,18 +85,57 @@ var MANUAL_WORDS = ['manual', 'user guide', 'userguide', 'user-guide', 'instruct
 var BROCHURE_WORDS = ['brochure', 'datasheet', 'data sheet', 'data-sheet', 'catalog', 'catalogue', 'leaflet', 'flyer',
   'prospekt', 'spec sheet', 'specification', 'datenblatt'];
 
-function fetchUrl(url, extra) {
-  // Spaces, Hebrew letters etc. must be percent-encoded (already-encoded %XX stays as is).
-  url = String(url).replace(/[^\x21-\x7e]+/g, function (c) { return encodeURIComponent(c); });
+// Spaces, Hebrew letters etc. must be percent-encoded (already-encoded %XX stays as is).
+function encodeUrl(url) {
+  return String(url).replace(/[^\x21-\x7e]+/g, function (c) { return encodeURIComponent(c); });
+}
+
+function fetchOptions(extra) {
   var opts = { muteHttpExceptions: true, followRedirects: true, headers: { 'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9' } };
   for (var k in (extra || {})) opts[k] = extra[k];
+  return opts;
+}
+
+// Responses downloaded ahead of time by prefetch(), used once by fetchUrl().
+var FETCH_CACHE = {};
+function fetchKey(url, extra) { return url + '|' + (extra && extra.followRedirects === false ? 'no-redirect' : ''); }
+
+function fetchUrl(url, extra) {
+  url = encodeUrl(url);
+  var key = fetchKey(url, extra);
+  if (key in FETCH_CACHE) {
+    var hit = FETCH_CACHE[key];
+    delete FETCH_CACHE[key];
+    return hit;
+  }
   try {
-    var r = UrlFetchApp.fetch(url, opts);
+    var r = UrlFetchApp.fetch(url, fetchOptions(extra));
     return r.getResponseCode() < 400 ? r : null;
   } catch (e) {
     return null;
   }
 }
+
+// Downloads many URLs at the same time (much faster than one by one).
+function prefetch(urls, extra) {
+  var todo = [];
+  (urls || []).forEach(function (u) {
+    if (!u) return;
+    u = encodeUrl(u);
+    if (todo.indexOf(u) < 0 && !(fetchKey(u, extra) in FETCH_CACHE)) todo.push(u);
+  });
+  for (var i = 0; i < todo.length; i += 10) {
+    var chunk = todo.slice(i, i + 10);
+    try {
+      var rs = UrlFetchApp.fetchAll(chunk.map(function (u) { var o = fetchOptions(extra); o.url = u; return o; }));
+      rs.forEach(function (r, j) { FETCH_CACHE[fetchKey(chunk[j], extra)] = r.getResponseCode() < 400 ? r : null; });
+    } catch (e) {
+      // One of them didn't answer in time: the others are fetched one by one when needed.
+    }
+  }
+}
+
+function clearPrefetch() { FETCH_CACHE = {}; }
 
 function hostOf(url) {
   var m = String(url).match(/^https?:\/\/([^\/?#:]+)/i);
@@ -405,6 +446,34 @@ function claudeRequest(settings, method, path, body) {
   return text ? JSON.parse(text) : {};
 }
 
+// Fast mode: direct calls, several at the same time. Apps Script cuts every request off after ~60s;
+// if one doesn't answer in time the whole group comes back as {timeout: true} and those products
+// continue as batch jobs instead.
+function claudeNow(settings, paramsList) {
+  var reqs = paramsList.map(function (params) {
+    return {
+      url: settings.apiBase + '/v1/messages', method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' }, payload: JSON.stringify(params),
+    };
+  });
+  var rs;
+  try {
+    rs = UrlFetchApp.fetchAll(reqs);
+  } catch (e) {
+    return paramsList.map(function () { return { timeout: true, message: String(e && e.message || e) }; });
+  }
+  return rs.map(function (r) {
+    var code = r.getResponseCode();
+    var text = r.getContentText();
+    var body = null;
+    try { body = JSON.parse(text); } catch (e) {}
+    if (code < 400 && body) return { result: { type: 'succeeded', message: body } };
+    var msg = 'Claude API ' + code + ': ' + ((body && body.error && body.error.message) || String(text).slice(0, 200)) +
+      (code === 401 ? ' (מפתח ה-API לא תקין - סורק מוצרים ← הגדרת מפתח API)' : '');
+    return { status: code, message: msg, result: { type: 'errored', error: { error: { message: msg } } } };
+  });
+}
+
 function submitBatch(settings, requests) {
   return claudeRequest(settings, 'post', '/v1/messages/batches', { requests: requests }).id;
 }
@@ -441,16 +510,19 @@ function researchParams(settings, p) {
     '4. Whether ' + hostOf(p.link) + ' is itself the manufacturer\'s official site.\n' +
     'Only report URLs you actually saw. Finish with ONLY this JSON (no other text after it):\n' +
     '```json\n{"manufacturer": "", "model": "", "official_domains": [], "official_product_url": "", "official_downloads_url": "", "site_is_manufacturer": false}\n```\n' +
-    'manufacturer = brand name as the manufacturer writes it (e.g. "FOTRIC"); model = model name without the brand (e.g. "348A"); use "" when not found.';
-  return {
+    'manufacturer = brand name as the manufacturer writes it (e.g. "FOTRIC"); model = model name without the brand (e.g. "348A"); use "" when not found.' +
+    (settings.fast ? '\nWork quickly: usually one or two searches are enough. Use web_fetch only if the search results don\'t show the URLs you need - the pages themselves are read later by other code.' : '');
+  var params = {
     model: settings.model,
     max_tokens: 16000,
     tools: [
-      { type: 'web_search_20260209', name: 'web_search', max_uses: 6 },
-      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 6 },
+      { type: 'web_search_20260209', name: 'web_search', max_uses: settings.fast ? 4 : 6 },
+      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: settings.fast ? 2 : 6 },
     ],
     messages: [{ role: 'user', content: question }],
   };
+  if (settings.fast) params.output_config = { effort: 'medium' };   // finding a website doesn't need deep thinking
+  return params;
 }
 
 function parseResearch(message) {
@@ -539,7 +611,8 @@ function writeParams(settings, p, styleExamples, brochureBase64, feedback) {
     max_tokens: 16000,
     system: [{ type: 'text', text: systemPrompt(settings, styleExamples), cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: content }],
-    output_config: { effort: 'high', format: { type: 'json_schema', schema: WRITE_SCHEMA } },
+    // Fast mode answers within Apps Script's ~60s limit more often at 'medium'; the Hebrew checks still apply.
+    output_config: { effort: settings.fast ? 'medium' : 'high', format: { type: 'json_schema', schema: WRITE_SCHEMA } },
   };
 }
 
@@ -953,14 +1026,15 @@ function tick() {
     var settings = readSettings();
     pollBatches(settings);
     recoverLostWaits();
-    var stages = getStages();
-    // Local steps (reading pages, saving files) - as many as fit in this run.
-    Object.keys(stages).forEach(function (id) {
-      if (['new', 'official', 'save'].indexOf(stages[id]) < 0 || timeLeft() < STEP_MIN_MS) return;
-      var p = loadState(id);
-      if (p) runLocalStep(settings, p);
-      else forget(id);
-    });
+    // Take every product as far as it can go in this run - all products together, stage after stage.
+    for (var round = 0; round < 10 && timeLeft() > 45000; round++) {
+      var moved = runLocalStage(settings, 'new');
+      if (settings.fast) moved = runClaudeNow(settings, 'research') || moved;
+      moved = runLocalStage(settings, 'official') || moved;
+      if (settings.fast) moved = runClaudeNow(settings, 'write') || moved;
+      moved = runLocalStage(settings, 'save') || moved;
+      if (!moved) break;
+    }
     submitBatches(settings, 'research');
     submitBatches(settings, 'write');
     var left = getStages();
@@ -970,6 +1044,130 @@ function tick() {
   } finally {
     lock.releaseLock();
   }
+}
+
+// Runs one local stage for all products in it: their pages/files are downloaded in parallel first.
+var LOCAL_GROUP = { new: 10, official: 5, save: 3 };
+
+function runLocalStage(settings, stage) {
+  var stages = getStages();
+  var ids = Object.keys(stages).filter(function (id) { return stages[id] === stage; });
+  var moved = false;
+  for (var i = 0; i < ids.length && timeLeft() >= STEP_MIN_MS; i += LOCAL_GROUP[stage]) {
+    var group = [];
+    ids.slice(i, i + LOCAL_GROUP[stage]).forEach(function (id) {
+      var p = loadState(id);
+      if (p) group.push(p);
+      else forget(id);
+    });
+    prefetchFor(stage, group);
+    group.forEach(function (p) {
+      if (timeLeft() < STEP_MIN_MS) return;
+      runLocalStep(settings, p);
+      moved = true;
+    });
+    clearPrefetch();
+  }
+  return moved;
+}
+
+function prefetchFor(stage, group) {
+  var noRedirect = { followRedirects: false };
+  if (stage === 'new') {
+    prefetch(group.map(function (p) { return p.link; }), noRedirect);
+  } else if (stage === 'official') {
+    var pages = [];
+    group.forEach(function (p) {
+      var r = p.research || {};
+      if (r.site_is_manufacturer) pages.push(p.link);
+      pages.push(r.official_product_url, r.official_downloads_url);
+    });
+    prefetch(pages, noRedirect);
+  } else if (stage === 'save') {
+    var files = [];
+    group.forEach(function (p) {
+      var c = p.content || {};
+      var off = p.official || { images: [], pdfs: [] };
+      uniqueIndexes(c.image_indexes, off.images.length).slice(0, 8).forEach(function (i) { files.push(off.images[i].url, off.images[i].fallback); });
+      [c.brochure_index, c.manual_index].forEach(function (i) { if (off.pdfs[i]) files.push(off.pdfs[i].url); });
+    });
+    prefetch(files);
+  }
+}
+
+// Fast mode: ask Claude directly (several products at the same time) instead of a batch job.
+var NOW_GROUP = 5;
+var NOW_MIN_MS = 75 * 1000;   // a direct call can take up to ~60s
+
+function runClaudeNow(settings, kind) {
+  var stages = getStages();
+  var ids = Object.keys(stages).filter(function (id) { return stages[id] === kind + '_pending'; });
+  if (!ids.length) return false;
+  var style = kind === 'write' ? styleExamples(settings) : null;
+  var moved = false;
+  var queue = ids.slice();
+  while (queue.length && timeLeft() > NOW_MIN_MS) {
+    var group = [];
+    var params = [];
+    while (queue.length && group.length < NOW_GROUP) {
+      var id = queue.shift();
+      var p = loadState(id);
+      if (!p) { forget(id); continue; }
+      if (p.useBatch && p.useBatch[kind]) continue;   // didn't fit in the time limit before: batch job
+      try {
+        params.push(claudeParams(settings, p, kind, style));
+        group.push(p);
+      } catch (e) {
+        fail(p, e);
+      }
+    }
+    if (!group.length) continue;
+    var answers = claudeNow(settings, params);
+    var m = getStages();
+    group.forEach(function (p, i) {
+      var a = answers[i];
+      if (a.timeout) {
+        p.useBatch = p.useBatch || {};
+        p.useBatch[kind] = true;
+        saveState(p, m);
+        return;
+      }
+      if (a.status === 401 || a.status === 403) {
+        fail(p, new Error(a.message));
+        m = getStages();
+        return;
+      }
+      if (a.status === 408 || a.status === 429 || a.status >= 500) {   // busy: try again, then as a batch job
+        p.nowErrors = (p.nowErrors || 0) + 1;
+        if (p.nowErrors >= 3) { p.useBatch = p.useBatch || {}; p.useBatch[kind] = true; }
+        saveState(p, m);
+        return;
+      }
+      try {
+        if (kind === 'research') applyResearch(p, a.result);
+        else applyWrite(p, a.result);
+        saveState(p, m);
+        moved = true;
+      } catch (e) {
+        fail(p, e);
+        m = getStages();
+      }
+    });
+    setStages(m);
+  }
+  return moved;
+}
+
+// The request for one product, used by both the direct calls and the batch jobs.
+function claudeParams(settings, p, kind, style) {
+  if (kind === 'research') {
+    var params = researchParams(settings, p);
+    if (p.researchContinuation) params.messages = params.messages.concat([p.researchContinuation]);
+    return params;
+  }
+  var brochure = p.skipBrochure ? null : brochureForClaude(p);
+  p.lastWriteHadBrochure = !!brochure;
+  return writeParams(settings, p, style, brochure, p.writeFeedback);
 }
 
 function runLocalStep(settings, p) {
@@ -1177,7 +1375,7 @@ function submitBatches(settings, kind) {
   var stages = getStages();
   var ids = Object.keys(stages).filter(function (id) { return stages[id] === kind + '_pending'; });
   if (!ids.length || timeLeft() < 30000) return;
-  var style = kind === 'write' ? styleExamples(settings) : null;
+  var style = kind === 'write' ? styleExamples(settings) : null;   // cached for 6 hours
   var requests = [];
   var members = [];
   var size = 0;
@@ -1203,16 +1401,10 @@ function submitBatches(settings, kind) {
     if (stop || timeLeft() < 30000) return;
     var p = loadState(pid);
     if (!p) { forget(pid); return; }
+    if (settings.fast && !(p.useBatch && p.useBatch[kind])) return;   // fast mode: handled directly
     var params;
     try {
-      if (kind === 'research') {
-        params = researchParams(settings, p);
-        if (p.researchContinuation) params.messages = params.messages.concat([p.researchContinuation]);
-      } else {
-        var brochure = p.skipBrochure ? null : brochureForClaude(p);
-        p.lastWriteHadBrochure = !!brochure;
-        params = writeParams(settings, p, style, brochure, p.writeFeedback);
-      }
+      params = claudeParams(settings, p, kind, style);
     } catch (e) {
       fail(p, e);
       return;

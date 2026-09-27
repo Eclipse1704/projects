@@ -1,9 +1,11 @@
 // Failure modes and edge cases. Run: node tests/robustness.mjs
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { fakeClaude, hebrew, loadProject, researchJson, text } from "./harness.mjs";
+import { FAST, fakeClaude, hebrew, loadProject, researchJson, text } from "./harness.mjs";
 
 const results = [];
+// Tests of the batch-job path: in the FAST run they force batch mode.
+const batchOnly = { fast: false };
 function test(name, fn) {
   try { fn(); results.push(["✓", name]); } catch (e) { results.push(["✗", name, e.message.split("\n").slice(0, 3).join(" ")]); }
 }
@@ -101,7 +103,7 @@ test("a product whose work data is gone (deleted/lost) doesn't keep the trigger 
 
 test("a product waiting on a batch that was lost gets resubmitted", () => {
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
-  const p = loadProject(web(claude));
+  const p = loadProject(web(claude), batchOnly);
   p.addLinks(["https://maker.test/p/a100"]);
   p.run("startRun");
   p.run("tick");
@@ -124,7 +126,7 @@ test("menu 'run' returns quickly: it only queues (the minute trigger does the wo
 
 test("waiting minutes/hours for Claude: an idle run doesn't read every product's state from Drive", () => {
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
-  const p = loadProject(web(claude));
+  const p = loadProject(web(claude), batchOnly);
   p.addLinks(Array.from({ length: 20 }, () => "https://maker.test/p/a100"));
   p.run("startRun");
   p.run("tick");
@@ -232,7 +234,7 @@ test("a second run after a finished one doesn't use the trashed work folder / tr
 
 test("results download keeps failing: the run doesn't loop forever", () => {
   const claude = fakeClaude(normal);
-  const p = loadProject((url, opts) => (url.includes("/results/") ? { code: 500, body: "boom" } : web(claude)(url, opts)));
+  const p = loadProject((url, opts) => (url.includes("/results/") ? { code: 500, body: "boom" } : web(claude)(url, opts)), batchOnly);
   p.addLinks(["https://maker.test/p/a100"]);
   p.run("startRun");
   const ticks = p.runUntilIdle(60);
@@ -299,7 +301,7 @@ test("re-running a product while the manufacturer's site is down keeps the image
 
 test("'Stop' cancels the jobs already sent to Claude (they cost money)", () => {
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
-  const p = loadProject(web(claude));
+  const p = loadProject(web(claude), batchOnly);
   p.addLinks(["https://maker.test/p/a100"]);
   p.run("startRun");
   p.run("tick");
@@ -342,7 +344,7 @@ test("text details: emoji entities, JSON-LD names given as objects", () => {
 
 test("research jobs are split into batches of at most 20 products", () => {
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
-  const p = loadProject(web(claude));
+  const p = loadProject(web(claude), batchOnly);
   p.addLinks(Array.from({ length: 45 }, (_, i) => "https://maker.test/p/a100?n=" + i));
   p.run("startRun");
   for (let i = 0; i < 3; i++) p.run("tick");
@@ -368,6 +370,58 @@ test("Hebrew quality: a word from 'words we don't use' sends the text back to Cl
   // Hebrew word boundaries: "הינו" inside another word is fine
   assert.equal(p.ctx.containsWord("בהינותו", "הינו"), false);
   assert.equal(p.ctx.containsWord("המכשיר הינו טוב", "הינו"), true);
+});
+
+// ---------- fast mode (direct calls) ----------
+const fastMode = { fast: true };
+
+test("fast mode: a product goes from link to finished Drive folder in a single run", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude), fastMode);
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.run("tick");
+  assert.match(String(p.rows()[0][1]), /✓/, "status after one run: " + p.rows()[0][1]);
+  assert.equal(claude.batches.size, 0, "used batch jobs");
+});
+
+test("fast mode: 12 products finish in one run, fetched and written in parallel", () => {
+  const claude = fakeClaude(normal);
+  const p = loadProject(web(claude), fastMode);
+  p.addLinks(Array.from({ length: 12 }, (_, i) => "https://maker.test/p/a100?n=" + i));
+  p.run("startRun");
+  p.run("tick");
+  const done = p.rows().filter((r) => /✓/.test(r[1])).length;
+  assert.equal(done, 12, "finished after one run: " + done);
+  assert.ok(Math.max(...p.g.log.fetchAlls) >= 5, "no parallel requests: " + p.g.log.fetchAlls);
+});
+
+test("fast mode: a direct call that runs past Google's 60s limit continues as a batch job", () => {
+  const claude = fakeClaude((params, req) => {
+    if (!req.custom_id && !params.tools) return { timeout: true };   // the direct write call is too slow
+    return normal(params);
+  });
+  const p = loadProject(web(claude), fastMode);
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  assert.match(String(p.rows()[0][1]), /✓/, "status " + p.rows()[0][1] + " " + p.rows()[0][5]);
+  assert.equal(claude.direct.filter((x) => !x.tools).length, 1, "direct write retried after a timeout (money wasted)");
+  assert.equal(claude.batches.size, 1, "write step didn't fall back to a batch");
+});
+
+test("fast mode: Claude busy (529) on a direct call: retried, and after 3 times sent as a batch job", () => {
+  let busy = 0;
+  const claude = fakeClaude((params, req) => {
+    if (!req.custom_id && params.tools) { busy++; return { status: 529, error: "overloaded" }; }
+    return normal(params);
+  });
+  const p = loadProject(web(claude), fastMode);
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.run("startRun");
+  p.runUntilIdle();
+  assert.match(String(p.rows()[0][1]), /✓/, "status " + p.rows()[0][1] + " " + p.rows()[0][5]);
+  assert.equal(busy, 3);
 });
 
 for (const r of results) console.log(r.join("  "));

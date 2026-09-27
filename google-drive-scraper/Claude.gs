@@ -23,6 +23,34 @@ function claudeRequest(settings, method, path, body) {
   return text ? JSON.parse(text) : {};
 }
 
+// Fast mode: direct calls, several at the same time. Apps Script cuts every request off after ~60s;
+// if one doesn't answer in time the whole group comes back as {timeout: true} and those products
+// continue as batch jobs instead.
+function claudeNow(settings, paramsList) {
+  var reqs = paramsList.map(function (params) {
+    return {
+      url: settings.apiBase + '/v1/messages', method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+      headers: { 'x-api-key': settings.apiKey, 'anthropic-version': '2023-06-01' }, payload: JSON.stringify(params),
+    };
+  });
+  var rs;
+  try {
+    rs = UrlFetchApp.fetchAll(reqs);
+  } catch (e) {
+    return paramsList.map(function () { return { timeout: true, message: String(e && e.message || e) }; });
+  }
+  return rs.map(function (r) {
+    var code = r.getResponseCode();
+    var text = r.getContentText();
+    var body = null;
+    try { body = JSON.parse(text); } catch (e) {}
+    if (code < 400 && body) return { result: { type: 'succeeded', message: body } };
+    var msg = 'Claude API ' + code + ': ' + ((body && body.error && body.error.message) || String(text).slice(0, 200)) +
+      (code === 401 ? ' (מפתח ה-API לא תקין - סורק מוצרים ← הגדרת מפתח API)' : '');
+    return { status: code, message: msg, result: { type: 'errored', error: { error: { message: msg } } } };
+  });
+}
+
 function submitBatch(settings, requests) {
   return claudeRequest(settings, 'post', '/v1/messages/batches', { requests: requests }).id;
 }
@@ -59,16 +87,19 @@ function researchParams(settings, p) {
     '4. Whether ' + hostOf(p.link) + ' is itself the manufacturer\'s official site.\n' +
     'Only report URLs you actually saw. Finish with ONLY this JSON (no other text after it):\n' +
     '```json\n{"manufacturer": "", "model": "", "official_domains": [], "official_product_url": "", "official_downloads_url": "", "site_is_manufacturer": false}\n```\n' +
-    'manufacturer = brand name as the manufacturer writes it (e.g. "FOTRIC"); model = model name without the brand (e.g. "348A"); use "" when not found.';
-  return {
+    'manufacturer = brand name as the manufacturer writes it (e.g. "FOTRIC"); model = model name without the brand (e.g. "348A"); use "" when not found.' +
+    (settings.fast ? '\nWork quickly: usually one or two searches are enough. Use web_fetch only if the search results don\'t show the URLs you need - the pages themselves are read later by other code.' : '');
+  var params = {
     model: settings.model,
     max_tokens: 16000,
     tools: [
-      { type: 'web_search_20260209', name: 'web_search', max_uses: 6 },
-      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: 6 },
+      { type: 'web_search_20260209', name: 'web_search', max_uses: settings.fast ? 4 : 6 },
+      { type: 'web_fetch_20260209', name: 'web_fetch', max_uses: settings.fast ? 2 : 6 },
     ],
     messages: [{ role: 'user', content: question }],
   };
+  if (settings.fast) params.output_config = { effort: 'medium' };   // finding a website doesn't need deep thinking
+  return params;
 }
 
 function parseResearch(message) {
@@ -157,7 +188,8 @@ function writeParams(settings, p, styleExamples, brochureBase64, feedback) {
     max_tokens: 16000,
     system: [{ type: 'text', text: systemPrompt(settings, styleExamples), cache_control: { type: 'ephemeral' } }],
     messages: [{ role: 'user', content: content }],
-    output_config: { effort: 'high', format: { type: 'json_schema', schema: WRITE_SCHEMA } },
+    // Fast mode answers within Apps Script's ~60s limit more often at 'medium'; the Hebrew checks still apply.
+    output_config: { effort: settings.fast ? 'medium' : 'high', format: { type: 'json_schema', schema: WRITE_SCHEMA } },
   };
 }
 
