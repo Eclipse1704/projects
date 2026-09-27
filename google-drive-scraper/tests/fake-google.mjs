@@ -29,6 +29,7 @@ class DFile {
   isTrashed() { return this.trashed; }
   setTrashed(t) { this.trashed = t; return this; }
   setContent(c) { this.blob = new Blob(c, this.blob.type, this.blob.name); return this; }
+  getUrl() { return `https://drive.google.com/file/d/${this.id}/view`; }
 }
 
 class DFolder {

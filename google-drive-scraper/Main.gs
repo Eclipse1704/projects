@@ -496,8 +496,8 @@ function stepSave(settings, p) {
     var blob = r.getBlob();
     if (Utilities.newBlob(blob.getBytes().slice(0, 5)).getDataAsString() !== '%PDF-') return;
     var name = stem + '-' + pair[0].toUpperCase() + '.pdf';
-    replaceFile(folder, name, blob.setContentType('application/pdf'));
-    saved.docs.push({ kind: pair[0], file: name, url: d.url });
+    var file = replaceFile(folder, name, blob.setContentType('application/pdf'));
+    saved.docs.push({ kind: pair[0], file: name, url: d.url, driveUrl: file.getUrl() });
   });
   uniqueIndexes(c.video_indexes, off.videos.length).forEach(function (i) { saved.videos.push(off.videos[i]); });
   p.saved = saved;
@@ -510,8 +510,14 @@ function stepSave(settings, p) {
   if (!saved.docs.some(function (d) { return d.kind === 'manual'; })) p.warnings.push('לא נמצא מדריך למשתמש באתר היצרן');
   if (!saved.videos.length) p.warnings.push('לא נמצא סרטון YouTube באתר היצרן');
 
-  replaceFile(folder, stem + '.html', Utilities.newBlob(productHtml(p), 'text/html', stem + '.html'));
-  saveAsGoogleDoc(folder, stem + ' - תיאור', p);
+  // Everything except the images and PDFs goes in one table. (Older versions saved an HTML file and a Doc.)
+  [stem + '.html', stem + ' - תיאור'].forEach(function (old) {
+    var it = folder.getFilesByName(old);
+    while (it.hasNext()) { var f = it.next(); if (!f.isTrashed()) f.setTrashed(true); }
+  });
+  var row = productRow(p, stem, folder.getUrl());
+  replaceFile(folder, stem + '.csv', csvBlob([CSV_HEADERS, row], stem + '.csv'));
+  updateAllProductsCsv(root, row);
   folder.setName(stem + ' - ' + c.name);
 
   p.stage = 'done';

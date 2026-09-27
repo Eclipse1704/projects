@@ -1,5 +1,5 @@
-// Output: one Drive folder per product with the Hebrew HTML page, a Google Doc copy for reading,
-// 3-5 images, the brochure and the user manual.
+// Output: one Drive folder per product with a CSV table (all the text, the HTML page and the links),
+// 3-5 images in "תמונות", the brochure and the user manual; plus one CSV of all products in the main folder.
 
 function esc(s) {
   return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -120,52 +120,76 @@ function productHtml(p) {
     '</article>\n</body>\n</html>\n';
 }
 
-// A readable Google Doc next to the HTML file (for reading in Drive). Optional: skipped on any error.
-function saveAsGoogleDoc(folder, name, p) {
-  try {
-    var it = folder.getFilesByName(name);
-    while (it.hasNext()) { var f = it.next(); if (!f.isTrashed()) f.setTrashed(true); }
-    var c = p.content;
-    var doc = DocumentApp.create(name);
-    var body = doc.getBody();
-    var H = DocumentApp.ParagraphHeading;
-    var rtl = function (el) { try { el.setLeftToRight(false); } catch (e) {} return el; };
-    var para = function (text, heading) { var x = rtl(body.appendParagraph(String(text || ''))); if (heading) x.setHeading(heading); return x; };
-    var bullet = function (text) { return rtl(body.appendListItem(String(text || ''))); };
-    var link = function (text, url) { var x = bullet(text); if (url) x.setLinkUrl(url); return x; };
-    var missing = 'לא נמצא באתר היצרן הרשמי.';
+// ---------- CSV (opens in Excel and Google Sheets) ----------
 
-    body.clear();
-    para(c.name, H.TITLE);
-    para('יצרן: ' + p.research.manufacturer + ' · דגם: ' + p.research.model);
-    para('תיאור קצר', H.HEADING1);
-    para(c.short_description);
-    para('תיאור מלא', H.HEADING1);
-    para('סקירה כללית', H.HEADING2);
-    String(c.overview || '').split(/\n\s*\n|\n/).filter(function (x) { return x.trim(); }).forEach(function (x) { para(x.trim()); });
-    if (c.usage && c.usage.length) { para('שימושים ואופן שימוש', H.HEADING2); c.usage.forEach(bullet); }
-    if (c.features && c.features.length) { para('תכונות עיקריות', H.HEADING2); c.features.forEach(bullet); }
-    if (c.specs && c.specs.length) {
-      para('מפרט טכני', H.HEADING2);
-      var table = body.appendTable(c.specs.map(function (x) { return [String(x.name), String(x.value)]; }));
-      for (var r = 0; r < table.getNumRows(); r++) {
-        rtl(table.getCell(r, 0).getChild(0).asParagraph()).setBold(true);
-      }
-    }
-    para('סרטוני הדגמה ב-YouTube', H.HEADING1);
-    if (p.saved.videos.length) p.saved.videos.forEach(function (v) { link(v.title || v.url, v.url); }); else para(missing);
-    para('תמונות המוצר (בתיקייה "' + IMAGES_FOLDER + '")', H.HEADING1);
-    if (p.saved.images.length) p.saved.images.forEach(function (im) { bullet(im.file.split('/').pop() + ' (' + im.width + '×' + im.height + ')'); }); else para(missing);
-    [['brochure', 'ברושור'], ['manual', 'מדריך למשתמש']].forEach(function (k) {
-      para(k[1], H.HEADING1);
-      var d = p.saved.docs.filter(function (x) { return x.kind === k[0]; })[0];
-      if (d) link(d.file + ' (מקור: ' + d.url + ')', d.url); else para(missing);
-    });
-    para('קישורים לדף המוצר', H.HEADING1);
-    p.productPages.forEach(function (x) { link(x.url + (x.official ? ' (אתר היצרן הרשמי)' : ' (אתר הספק)'), x.url); });
-    doc.saveAndClose();
-    DriveApp.getFileById(doc.getId()).moveTo(folder);
-  } catch (e) {
-    console.warn('Google Doc not created: ' + e.message);
+var ALL_PRODUCTS_CSV = 'כל המוצרים.csv';
+var CSV_HEADERS = ['מזהה', 'שם המוצר', 'יצרן', 'דגם', 'תיאור קצר', 'תיאור מלא', 'שימושים ואופן שימוש', 'תכונות עיקריות', 'מפרט טכני',
+  'סרטוני YouTube', 'ברושור (בדרייב)', 'ברושור (באתר היצרן)', 'מדריך למשתמש (בדרייב)', 'מדריך למשתמש (באתר היצרן)', 'תמונות',
+  'דף המוצר באתר היצרן', 'דף המוצר באתר הספק', 'תיקייה בדרייב', 'הערות', 'HTML'];
+var CSV_CELL_MAX = 32000;   // Excel's limit per cell is 32,767 characters
+
+// One product as a table row, in the order of CSV_HEADERS.
+function productRow(p, stem, folderUrl) {
+  var c = p.content;
+  var lines = function (items) { return (items || []).map(function (x) { return '• ' + x; }).join('\n'); };
+  var doc = function (kind, key) { var d = p.saved.docs.filter(function (x) { return x.kind === kind; })[0]; return d ? d[key] || '' : ''; };
+  var page = function (official) { return p.productPages.filter(function (x) { return !!x.official === official; }).map(function (x) { return x.url; }).join('\n'); };
+  var html = productHtml(p);
+  if (html.length > CSV_CELL_MAX) html = html.replace(/<script type="application\/ld\+json">[\s\S]*?<\/script>\n/, '').replace(/<style>[\s\S]*?<\/style>\n/, '');
+  return [
+    stem, c.name, p.research.manufacturer, p.research.model, c.short_description,
+    String(c.overview || '').trim(), lines(c.usage), lines(c.features),
+    (c.specs || []).map(function (x) { return x.name + ': ' + x.value; }).join('\n'),
+    p.saved.videos.map(function (v) { return v.url; }).join('\n'),
+    doc('brochure', 'driveUrl'), doc('brochure', 'url'), doc('manual', 'driveUrl'), doc('manual', 'url'),
+    p.saved.images.map(function (im) { return im.file.split('/').pop() + ' (' + im.width + '×' + im.height + ')'; }).join('\n'),
+    page(true), page(false), folderUrl, p.warnings.join('\n'), html,
+  ];
+}
+
+function csvCell(v) {
+  v = String(v === undefined || v === null ? '' : v).replace(/\r\n?/g, '\n');
+  if (v.length > CSV_CELL_MAX) v = v.slice(0, CSV_CELL_MAX);
+  if (/^[=+@]|^-[^\d.]/.test(v)) v = "'" + v;   // Excel would run it as a formula
+  return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+}
+
+// With a BOM, so Excel shows the Hebrew correctly.
+function toCsv(rows) {
+  return '﻿' + rows.map(function (r) { return r.map(csvCell).join(','); }).join('\r\n') + '\r\n';
+}
+
+function parseCsv(text) {
+  text = String(text || '').replace(/^﻿/, '');
+  var rows = [], row = [], cell = '', q = false;
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i];
+    if (q) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') q = false;
+      else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += ch;
   }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows;
+}
+
+function csvBlob(rows, name) {
+  return Utilities.newBlob(toCsv(rows), 'text/csv', name);
+}
+
+// The main folder's table: one row per product, a product that runs again replaces its row.
+function updateAllProductsCsv(root, row) {
+  var file = firstLive(root.getFilesByName(ALL_PRODUCTS_CSV));
+  var rows = file ? parseCsv(file.getBlob().getDataAsString('UTF-8')).slice(1) : [];
+  rows = rows.filter(function (r) { return r[0] !== row[0]; });
+  rows.push(row);
+  var content = toCsv([CSV_HEADERS].concat(rows));
+  if (file) file.setContent(content);
+  else root.createFile(Utilities.newBlob(content, 'text/csv', ALL_PRODUCTS_CSV));
 }

@@ -170,9 +170,9 @@ assert.deepEqual(names, ["MITCORP-X1000-PLUS - מוצר X1000 Plus", "MITCORP-X2
 const folderOf = (name) => live(root).find((f) => f.name.startsWith(name));
 const filesIn = (folder) => folder.files.filter((f) => !f.trashed).map((f) => f.getName()).sort();
 const imagesOf = (name) => filesIn(live(folderOf(name)).find((f) => f.name === "תמונות"));
-assert.deepEqual(filesIn(folderOf("MITCORP-X2000 ")), ["MITCORP-X2000 - תיאור", "MITCORP-X2000-BROCHURE.pdf", "MITCORP-X2000-MANUAL.pdf", "MITCORP-X2000.html"]);
-assert.deepEqual(filesIn(folderOf("THERMO-226S")), ["THERMO-226S - תיאור", "THERMO-226S-BROCHURE.pdf", "THERMO-226S.html"]);
-assert.deepEqual(filesIn(folderOf("MITCORP-X1000")), ["MITCORP-X1000-PLUS - תיאור", "MITCORP-X1000-PLUS-MANUAL.pdf", "MITCORP-X1000-PLUS.html"]);
+assert.deepEqual(filesIn(folderOf("MITCORP-X2000 ")), ["MITCORP-X2000-BROCHURE.pdf", "MITCORP-X2000-MANUAL.pdf", "MITCORP-X2000.csv"]);
+assert.deepEqual(filesIn(folderOf("THERMO-226S")), ["THERMO-226S-BROCHURE.pdf", "THERMO-226S.csv"]);
+assert.deepEqual(filesIn(folderOf("MITCORP-X1000")), ["MITCORP-X1000-PLUS-MANUAL.pdf", "MITCORP-X1000-PLUS.csv"]);
 
 // Images: full-size versions, in Claude's order, in each product's "תמונות" folder; the 500x400 photo is dropped
 // because there are 3 high-resolution ones; the X1000 only has a small one, which is kept and flagged.
@@ -186,15 +186,36 @@ assert.ok(imgBytes("THERMO-226S", "THERMO-226S-001.jpg").equals(IMG["thermo.test
 assert.match(rows[2][5], /רזולוציה נמוכה.*300×200/);
 
 const x2000Folder = live(root).find((f) => f.name.startsWith("MITCORP-X2000 "));
-const page = x2000Folder.files.find((f) => f.getName() === "MITCORP-X2000.html").getBlob().getDataAsString();
+// Everything except images and PDFs is in the product's CSV table (header row + one product row).
+const csvText = x2000Folder.files.find((f) => f.getName() === "MITCORP-X2000.csv").getBlob().getDataAsString();
+assert.ok(csvText.startsWith("\uFEFF"), "no BOM: Excel would show gibberish instead of Hebrew");
+const table = ctx.parseCsv(csvText);
+assert.equal(table.length, 2);
+const col = (name) => table[1][table[0].indexOf(name)];
+assert.equal(col("שם המוצר"), "מוצר X2000");
+assert.equal(col("יצרן"), "Mitcorp");
+assert.ok(col("תיאור קצר") && col("תיאור מלא") && col("מפרט טכני").includes(":"), "text columns empty");
+assert.match(col("סרטוני YouTube"), /watch\?v=AbCdEfGhIjK/);
+assert.match(col("ברושור (בדרייב)"), /^https:\/\/drive\.google\.com\/file\//);
+assert.match(col("ברושור (באתר היצרן)"), /maker\.test\/files\//);
+assert.match(col("מדריך למשתמש (בדרייב)"), /^https:\/\/drive\.google\.com\/file\//);
+assert.match(col("תמונות"), /MITCORP-X2000-001\.jpg \(2000×1500\)/);
+assert.equal(col("דף המוצר באתר היצרן"), "https://maker.test/product/x2000/");
+assert.equal(col("דף המוצר באתר הספק"), "https://supplier.test/product/x2000");
+assert.equal(col("תיקייה בדרייב"), x2000Folder.getUrl());
+const page = col("HTML");
 for (const s of ['lang="he" dir="rtl"', 'id="product-name"', 'id="short-description"', 'id="full-description"', 'id="usage"', 'id="specifications"',
   "watch?v=AbCdEfGhIjK", 'src="תמונות/MITCORP-X2000-001.jpg" width="2000" height="1500"', "2000×1500", 'href="MITCORP-X2000-BROCHURE.pdf"', 'href="MITCORP-X2000-MANUAL.pdf"',
   "https://supplier.test/product/x2000", "(אתר הספק)", "https://maker.test/product/x2000/", "(אתר היצרן הרשמי)", "application/ld+json"]) {
   assert.ok(page.includes(s), "product page has " + s);
 }
 assert.ok(!page.includes("supplier.test/files") && !page.includes("dist.jpg"), "nothing taken from the distributor");
-const doc = x2000Folder.files.find((f) => f.getName() === "MITCORP-X2000 - תיאור");
-assert.equal(doc.getMimeType(), "application/vnd.google-apps.document");
+
+// The main folder has one table with every product.
+if (process.env.DUMP) (await import('node:fs')).writeFileSync(process.env.DUMP, root.files.find((f) => f.getName() === "כל המוצרים.csv").getBlob().getDataAsString());
+const all = ctx.parseCsv(root.files.find((f) => f.getName() === "כל המוצרים.csv" && !f.trashed).getBlob().getDataAsString());
+assert.deepEqual([...all.slice(1).map((r) => r[0])].sort(), ["MITCORP-X1000-PLUS", "MITCORP-X2000", "THERMO-226S"]);
+assert.ok(all.every((r) => r.length === all[0].length), "rows with a different number of columns");
 
 // Claude usage
 const researchReqs = claudeRequests.filter((r) => r.params.tools);

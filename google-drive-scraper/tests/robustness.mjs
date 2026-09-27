@@ -420,7 +420,7 @@ test("install: the web app opens (title, phone-friendly), with no spreadsheet at
   assert.doesNotMatch(code, /SpreadsheetApp/);
 });
 
-test("no advanced services needed (install = paste one file); the readable Google Doc is built with DocumentApp", () => {
+test("no advanced services needed (install = paste one file); a product runs again: its row in the main table is replaced, not added", () => {
   const code = ["Main.gs", "Claude.gs", "Output.gs", "Extract.gs", "Settings.gs"].map((f) => readFileSync(new URL("../" + f, import.meta.url), "utf8")).join("\n");
   assert.doesNotMatch(code, /\bDrive\.Files\b/);
   const claude = fakeClaude(normal);
@@ -428,12 +428,22 @@ test("no advanced services needed (install = paste one file); the readable Googl
   p.addLinks(["https://maker.test/p/a100"]);
   p.start();
   p.runUntilIdle();
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.runUntilIdle();
+  const all = rootOf(p).files.filter((f) => f.getName() === "כל המוצרים.csv" && !f.trashed);
+  assert.equal(all.length, 1);
+  const table = p.ctx.parseCsv(all[0].getBlob().getDataAsString());
+  assert.equal(table.length, 2, "product added twice to the table");
   const folder = rootOf(p).folders.find((f) => f.name.startsWith("MAKER-A100") && !f.trashed);
-  const doc = folder.files.find((f) => f.mime === "application/vnd.google-apps.document" && !f.trashed);
-  assert.ok(doc, "no Google Doc in the product folder");
-  const lines = JSON.parse(doc.getBlob().getDataAsString());
-  assert.equal(lines[0].heading, "TITLE");
-  assert.ok(lines.some((l) => l.text === "תיאור קצר") && lines.every((l) => l.kind === "table" || l.rtl), "missing sections or not right-to-left");
+  assert.deepEqual(folder.files.filter((f) => !f.trashed && /csv$/.test(f.getName())).length, 1);
+});
+
+test("CSV: commas, quotes, new lines and Hebrew survive; formulas are not run by Excel", () => {
+  const p = loadProject(() => null);
+  const rows = [["א,ב", 'אמר "שלום"', "שורה 1\nשורה 2", "=HYPERLINK(1)", "-20°C", "-שלילי"]];
+  const back = p.ctx.parseCsv(p.ctx.toCsv(rows));
+  assert.deepEqual([...back[0]], ["א,ב", 'אמר "שלום"', "שורה 1\nשורה 2", "'=HYPERLINK(1)", "-20°C", "'-שלילי"]);
 });
 
 test("a background run that crashes shows the error on the products and in the app", () => {
