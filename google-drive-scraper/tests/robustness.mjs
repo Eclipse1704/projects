@@ -1,7 +1,7 @@
 // Failure modes and edge cases. Run: node tests/robustness.mjs
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { FAST, fakeClaude, hebrew, loadProject, researchJson, text } from "./harness.mjs";
 
 const results = [];
@@ -36,7 +36,7 @@ test("invalid API key: the row shows the error and the run stops (no endless tri
   const claude = fakeClaude(normal, { key: "sk-right" });
   const p = loadProject(web(claude), { apiKey: "sk-wrong" });
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle(10);
   const [row] = p.rows();
   assert.match(String(row[1]), /שגיאה/, "status: " + row[1]);
@@ -48,7 +48,7 @@ test("temporary API overload (529) when submitting: retried on the next run", ()
   const claude = fakeClaude(normal, { failCreate: (n) => (n === 1 ? { code: 529, body: { error: { message: "overloaded" } }, type: "application/json" } : null) });
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   assert.match(String(p.rows()[0][1]), /✓/, "status: " + p.rows()[0][1] + " " + p.rows()[0][5]);
 });
@@ -64,7 +64,7 @@ test("research paused twice (pause_turn): continuation is a valid conversation",
   });
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   const [row] = p.rows();
   assert.equal(row[3], "Maker", "manufacturer: " + row[3] + " / " + row[1] + " / " + row[5]);
@@ -80,7 +80,7 @@ test("a brochure Claude can't read (errored request) doesn't fail the product: r
   });
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   assert.match(String(p.rows()[0][1]), /✓/, "status: " + p.rows()[0][1] + " " + p.rows()[0][5]);
 });
@@ -89,7 +89,7 @@ test("a product whose work data is gone (deleted/lost) doesn't keep the trigger 
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   for (const stage of ["new", "research_pending", "research_wait", "write_pending"]) {
     p.ctx.setStages({ pGONE: stage });
@@ -106,7 +106,7 @@ test("a product waiting on a batch that was lost gets resubmitted", () => {
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
   const p = loadProject(web(claude), batchOnly);
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.run("tick");
   p.g.scriptProps.setProperty("BATCHES", "[]"); // e.g. the run was killed after submitting
   claude.batches.clear();
@@ -121,7 +121,7 @@ test("menu 'run' returns quickly: it only queues (the minute trigger does the wo
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
   const n = p.g.log.fetches.length;
-  p.run("startRun");
+  p.start();
   assert.equal(p.g.log.fetches.length, n, "startRun fetched pages itself (the user waits minutes on a spinner)");
 });
 
@@ -129,7 +129,7 @@ test("waiting minutes/hours for Claude: an idle run doesn't read every product's
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
   const p = loadProject(web(claude), batchOnly);
   p.addLinks(Array.from({ length: 20 }, () => "https://maker.test/p/a100"));
-  p.run("startRun");
+  p.start();
   p.run("tick");
   p.run("tick");
   let reads = 0;
@@ -144,7 +144,7 @@ test("saving progress doesn't fill the Drive trash with old copies", () => {
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100", "https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   for (let i = 0; i < 6; i++) p.run("tick");
   const root = p.g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
   const state = root.folders.find((f) => f.name === "_מצב_עבודה");
@@ -156,7 +156,7 @@ test("a step that keeps getting cut off (6-minute limit) stops after 3 tries wit
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   // Simulate: three earlier runs started the 'new' step and were killed before finishing.
   const id = p.rows()[0][6];
   const root = p.g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
@@ -177,7 +177,7 @@ test("Hebrew-only product name and no manufacturer found: products don't overwri
     "shop.test/b1": PAGE("<h1>מכשיר בדיקה</h1><p>" + "טקסט. ".repeat(50) + "</p>"),
   }));
   p.addLinks(["https://shop.test/a1", "https://shop.test/b1"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   const root = p.g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
   const folders = root.folders.filter((f) => !f.trashed);
@@ -204,7 +204,7 @@ test("many products at once (400 links): no crash on Google's 9KB-per-setting li
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
   const p = loadProject(web(claude));
   p.addLinks(Array.from({ length: 400 }, (_, i) => "https://maker.test/p/a100?n=" + i));
-  p.run("startRun");
+  p.start();
   assert.equal(p.rows().filter((r) => r[1] === "ממתין בתור").length, 400);
   for (let i = 0; i < 12; i++) p.run("tick");
   assert.ok(p.rows().every((r) => !/שגיאה/.test(r[1])), p.rows().find((r) => /שגיאה/.test(r[1]))?.[5]);
@@ -219,12 +219,12 @@ test("a second run after a finished one doesn't use the trashed work folder / tr
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   const first = liveFolders(rootOf(p)).find((f) => f.name.startsWith("MAKER-A100"));
   first.setTrashed(true);   // the user deleted the product folder
-  p.sheet.set(2, 2, "");    // ...and runs it again
-  p.run("startRun");
+  p.addLinks(["https://maker.test/p/a100"]);   // ...and runs it again
+  p.start();
   p.runUntilIdle();
   const state = rootOf(p).folders.filter((f) => f.name === "_מצב_עבודה");
   assert.ok(state.every((f) => f.trashed), "work folder left behind");
@@ -237,7 +237,7 @@ test("results download keeps failing: the run doesn't loop forever", () => {
   const claude = fakeClaude(normal);
   const p = loadProject((url, opts) => (url.includes("/results/") ? { code: 500, body: "boom" } : web(claude)(url, opts)), batchOnly);
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   const ticks = p.runUntilIdle(60);
   assert.ok(ticks < 60, "still running after 60 runs");
   assert.match(String(p.rows()[0][1]), /שגיאה/);
@@ -254,7 +254,7 @@ test("a link that redirects: relative image/PDF links resolve against the final 
     "maker.test/en/products/a100/docs/A100-brochure.pdf": { body: PDF, type: "application/pdf" },
   }));
   p.addLinks(["https://maker.test/p/123"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   const row = p.rows()[0];
   assert.doesNotMatch(String(row[5]), /תמונות|ברושור/, "notes: " + row[5]);
@@ -272,7 +272,7 @@ test("images a CDN sends as application/octet-stream are accepted (type read fro
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude, Object.fromEntries(["a1", "a2", "a3"].map((n) => [`maker.test/i/${n}.jpg`, { body: jpeg(1200, 900), type: "binary/octet-stream" }]))));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   assert.doesNotMatch(String(p.rows()[0][5]), /תמונות/, "notes: " + p.rows()[0][5]);
 });
@@ -289,11 +289,11 @@ test("re-running a product while the manufacturer's site is down keeps the image
   const base = web(claude);
   const p = loadProject((url, opts) => (down && /\/i\//.test(url) ? null : base(url, opts)));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   down = true;
-  p.sheet.set(2, 2, "");
-  p.run("startRun");
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
   p.runUntilIdle();
   const folder = liveFolders(rootOf(p)).find((f) => f.name.startsWith("MAKER-A100"));
   const imgs = liveFolders(folder).find((f) => f.name === "תמונות").files.filter((f) => !f.trashed);
@@ -304,20 +304,21 @@ test("'Stop' cancels the jobs already sent to Claude (they cost money)", () => {
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
   const p = loadProject(web(claude), batchOnly);
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.run("tick");
   p.run("stopRun");
   assert.ok(p.g.log.fetches.some((f) => f.method === "post" && /\/cancel$/.test(f.url)), "no cancel request");
   assert.equal(p.g.triggers.length, 0);
 });
 
-test("a product name starting with '=' is written as text, not a formula", () => {
-  const claude = fakeClaude((params) => (params.tools ? researchJson(OFFICIAL) : hebrew({ name: "=IMPORTXML(1)", image_indexes: [0, 1, 2] })));
+test("a strange product name ('=…', HTML) is kept as plain text", () => {
+  const claude = fakeClaude((params) => (params.tools ? researchJson(OFFICIAL) : hebrew({ name: "=IMPORTXML(1) <b>", image_indexes: [0, 1, 2] })));
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
-  assert.equal(p.rows()[0][2], "'=IMPORTXML(1)");
+  assert.equal(p.rows()[0][2], "=IMPORTXML(1) <b>");
+  assert.match(p.run("doGet").html, /esc\(it\.name \|\| guessName/, "the app must escape names");
 });
 
 test("srcset without spaces after commas: the largest image is chosen", () => {
@@ -330,7 +331,7 @@ test("Claude's text still invalid after all retries (no product name): error, no
   const claude = fakeClaude((params) => (params.tools ? researchJson(OFFICIAL) : hebrew({ name: "" })));
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   assert.match(String(p.rows()[0][1]), /שגיאה/, "status " + p.rows()[0][1]);
   assert.ok(!liveFolders(rootOf(p)).some((f) => /undefined| - $/.test(f.name)));
@@ -347,7 +348,7 @@ test("research jobs are split into batches of at most 20 products", () => {
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
   const p = loadProject(web(claude), batchOnly);
   p.addLinks(Array.from({ length: 45 }, (_, i) => "https://maker.test/p/a100?n=" + i));
-  p.run("startRun");
+  p.start();
   for (let i = 0; i < 3; i++) p.run("tick");
   const sizes = [...claude.batches.values()].map((b) => b.reqs.length);
   assert.ok(sizes.length >= 3 && sizes.every((n) => n <= 20), "batch sizes " + sizes);
@@ -362,7 +363,7 @@ test("Hebrew quality: a word from 'words we don't use' sends the text back to Cl
   });
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   assert.equal(writes, 2, "not retried");
   const retry = claude.requests.filter((r) => r.params.system).pop();
@@ -375,26 +376,29 @@ test("Hebrew quality: a word from 'words we don't use' sends the text back to Cl
 
 // ---------- installation ----------
 
-test("'make a copy' of a sheet: the copy doesn't get the original's API key or work queue", () => {
+test("'make a copy' of the script: the copy doesn't get the original's API key or work queue", () => {
   const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
   const p = loadProject(web(claude), batchOnly);
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.run("tick");
   assert.ok(p.g.scriptProps.getProperty("ANTHROPIC_API_KEY"));
-  p.g.sheetId.value = "sheet-2";   // the copy has a different id; Google copies the script and its properties
-  p.run("onOpen");
+  p.g.sheetId.value = "script-2";   // the copy has a different id; Google copies the script and its properties
+  p.run("doGet");
   assert.equal(p.g.scriptProps.getProperty("ANTHROPIC_API_KEY"), null, "API key copied to the copy");
   assert.equal(p.ctx.getBatches().length, 0);
   assert.equal(Object.keys(p.ctx.getStages()).length, 0);
+  assert.equal(p.run("appState").items.length, 0, "the original's product list copied");
 });
 
-test("fresh install: opening the sheet creates the products, settings and instructions sheets", () => {
+test("install: the web app opens (title, phone-friendly), with no spreadsheet at all", () => {
   const p = loadProject(() => null);
-  p.g.sheets.clear();
-  p.run("onOpen");
-  assert.deepEqual([...p.g.sheets.keys()].sort(), ["הגדרות", "הוראות", "מוצרים"].sort());
-  assert.match(String(p.g.sheets.get("הוראות").get(2, 1)), /פתח את הסורק/);
+  const page = p.run("doGet");
+  assert.equal(page.title, "סורק מוצרים");
+  assert.match(page.meta.viewport, /width=device-width/);
+  assert.match(page.html, /id="links"/);
+  const code = readdirSync(new URL("..", import.meta.url)).filter((f) => f.endsWith(".gs")).map((f) => readFileSync(new URL("../" + f, import.meta.url), "utf8")).join("\n");
+  assert.doesNotMatch(code, /SpreadsheetApp/);
 });
 
 test("no advanced services needed (install = paste one file); the readable Google Doc is built with DocumentApp", () => {
@@ -403,7 +407,7 @@ test("no advanced services needed (install = paste one file); the readable Googl
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   const folder = rootOf(p).folders.find((f) => f.name.startsWith("MAKER-A100") && !f.trashed);
   const doc = folder.files.find((f) => f.mime === "application/vnd.google-apps.document" && !f.trashed);
@@ -413,72 +417,113 @@ test("no advanced services needed (install = paste one file); the readable Googl
   assert.ok(lines.some((l) => l.text === "תיאור קצר") && lines.every((l) => l.kind === "table" || l.rtl), "missing sections or not right-to-left");
 });
 
-test("a background run that crashes shows the error on the rows and in 'מצב המערכת'", () => {
+test("a background run that crashes shows the error on the products and in the app", () => {
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude));
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   const drive = p.ctx.DriveApp;
   p.ctx.DriveApp = { ...drive, getFoldersByName: () => { throw new Error("Exception: Access denied: DriveApp."); } };
   p.run("tick");
-  p.run("showStatus");
   p.ctx.DriveApp = drive;
   const notes = String(p.rows()[0][5]);
   assert.ok(/תקלה|שגיאה/.test(notes + p.rows()[0][1]), "nothing shown: " + p.rows()[0][1] + " / " + notes);
-  const status = p.g.alerts.at(-1);
-  assert.match(status, /עבודה ברקע: פעילה/);
-  assert.match(status, /מפתח API: מוגדר/);
-  assert.match(status, /Access denied: DriveApp/);
+  const w = p.run("appState").worker;
+  assert.equal(w.running, true);
+  assert.match(w.lastError, /Access denied: DriveApp/);
+  p.runUntilIdle();   // Drive is back: the product finishes and the error goes away on the next start
+  assert.match(String(p.rows()[0][1]), /✓/);
 });
 
-// ---------- the scraper window ----------
+// ---------- the app ----------
 
-test("window: API key is checked and saved from the window", () => {
+test("app: API key is checked and saved from the window", () => {
   const claude = fakeClaude(normal, { key: "sk-ant-good" });
   const p = loadProject(web(claude), { apiKey: "" });
-  assert.equal(p.run("sidebarState").hasKey, false);
-  assert.equal(p.run("sidebarSaveKey", "hello").ok, false);
-  const bad = p.run("sidebarSaveKey", "sk-ant-wrong");
+  assert.equal(p.run("appState").hasKey, false);
+  assert.equal(p.run("appSaveKey", "hello").ok, false);
+  const bad = p.run("appSaveKey", "sk-ant-wrong");
   assert.equal(bad.ok, false, "wrong key accepted");
   assert.match(bad.message, /לא תקין/);
-  assert.equal(p.run("sidebarSaveKey", "  sk-ant-good  ").ok, true);
-  assert.equal(p.run("sidebarState").hasKey, true);
+  assert.equal(p.run("appSaveKey", "  sk-ant-good  ").ok, true);
+  assert.equal(p.run("appState").hasKey, true);
 });
 
-test("window: paste messy text with links, press start, watch progress, get the folder link", () => {
+test("app: paste messy text with links, press start, watch progress, get the folder link", () => {
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude));
-  const started = p.run("sidebarStart", "תבדוק את זה: https://maker.test/p/a100, וגם את\nhttps://maker.test/p/a100?n=2.\nhttps://maker.test/p/a100");
+  const started = p.run("appStart", "תבדוק את זה: https://maker.test/p/a100, וגם את\nhttps://maker.test/p/a100?n=2.\nhttps://maker.test/p/a100");
   assert.equal(started.ok, true, started.message);
   assert.match(started.message, /2 מוצרים התחילו/);
   assert.equal(p.rows().length, 2);
-  let st = p.run("sidebarState");
+  let st = p.run("appState");
   assert.equal(st.items.length, 2);
   assert.ok(st.items.every((i) => i.state === "working" && i.step === "ממתין להתחלה"));
   p.runUntilIdle();
-  st = p.run("sidebarState");
+  st = p.run("appState");
   assert.ok(st.items.every((i) => (i.state === "done" || i.state === "warn") && i.pct === 100), JSON.stringify(st.items));
   assert.ok(st.items.every((i) => i.folderUrl.startsWith("https://drive.google.com/")), "no folder link");
   assert.ok(st.items.every((i) => i.name && i.manufacturer === "Maker"));
 });
 
-test("window: start without an API key asks for the key; text without links explains", () => {
+test("app: start without an API key asks for the key; text without links explains", () => {
   const p = loadProject(() => null, { apiKey: "" });
-  const r = p.run("sidebarStart", "https://maker.test/p/a100");
+  const r = p.run("appStart", "https://maker.test/p/a100");
   assert.equal(r.needKey, true);
   p.g.scriptProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
-  const r2 = p.run("sidebarStart", "בלי קישורים בכלל");
+  const r2 = p.run("appStart", "בלי קישורים בכלל");
   assert.equal(r2.ok, false);
   assert.match(r2.message, /לא מצאתי קישורים/);
 });
 
-test("window: opens from the menu, and after that opens by itself (one trigger, not one per open)", () => {
+test("app: settings are saved, used by the worker, and can be reset to the defaults", () => {
   const p = loadProject(() => null);
-  p.run("openScraper");
-  p.run("openScraper");
-  assert.equal(p.g.ui.sidebars.length, 2);
-  assert.equal(p.g.ui.sidebars[0].title, "סורק מוצרים");
-  assert.equal(p.g.triggers.filter((t) => t.getHandlerFunction() === "autoOpenScraper").length, 1);
+  let st = p.run("appGetSettings");
+  assert.equal(st.values["מודל"], "claude-sonnet-5");
+  assert.equal(st.keyEnd, "test");
+  st = p.run("appSaveSettings", { ...st.values, "מודל": "claude-opus-5", "תיקייה בדרייב": "  מוצרים חדשים ", "מילון מונחים": st.values["מילון מונחים"] + "\r\nleak = נזילה" });
+  assert.equal(st.values["מודל"], "claude-opus-5");
+  const s = p.run("readSettings");
+  assert.equal(s.model, "claude-opus-5");
+  assert.equal(s.rootFolder, "מוצרים חדשים");
+  assert.match(s.glossary, /\nleak = נזילה$/);
+  assert.ok(!JSON.parse(p.ctx.getBig("SETTINGS"))["מילים שלא משתמשים בהן"], "unchanged defaults saved (improved defaults would never reach this install)");
+  st = p.run("appResetSettings");
+  assert.equal(st.values["מודל"], "claude-sonnet-5");
+  assert.equal(p.run("readSettings").rootFolder, "NDT24 - מוצרים");
+});
+
+test("app: the list keeps finished products (with links) until cleared; clearing keeps running ones", () => {
+  const claude = fakeClaude(normal, { pollsUntilEnded: 1000 });
+  const p = loadProject(web(claude), batchOnly);
+  p.addLinks(["https://maker.test/p/a100"]);
+  p.start();
+  p.run("tick");   // waiting on Claude
+  const fin = p.ctx.getItems();
+  fin.unshift({ id: "old", link: "https://x.test/old", status: "✓ הושלם", name: "ישן", manufacturer: "", folderUrl: "https://drive.google.com/x", notes: "" });
+  p.ctx.flushItems();
+  assert.equal(p.run("appState").items.length, 2);
+  const after = p.run("appClearFinished");
+  assert.deepEqual(after.items.map((i) => i.link), ["https://maker.test/p/a100"]);
+});
+
+test("app: the list is capped (oldest finished products dropped), and updates don't rewrite unchanged parts", () => {
+  const p = loadProject(() => null);
+  const list = p.ctx.getItems();
+  for (let i = 0; i < 260; i++) list.push({ id: "x" + i, link: "https://x.test/" + i, status: "✓ הושלם", name: "מוצר " + i, manufacturer: "", folderUrl: "https://drive.google.com/" + i, notes: "הערה ".repeat(20) });
+  p.ctx.flushItems();
+  const items = p.run("getItems");
+  assert.equal(items.length, 200);
+  assert.equal(items[0].id, "x60");
+  let writes = 0;
+  const set = p.g.scriptProps.setProperty.bind(p.g.scriptProps);
+  p.g.scriptProps.setProperty = (k, v) => { writes++; return set(k, v); };
+  p.run("getItems");
+  p.ctx.setRowStatus("x259", "✗ שגיאה", { notes: "x" });
+  p.ctx.flushItems();
+  p.g.scriptProps.setProperty = set;
+  assert.ok(writes <= 3, "writes for one changed product: " + writes);
+  assert.equal(p.run("getItems").at(-1).status, "✗ שגיאה");
 });
 
 // ---------- fast mode (direct calls) ----------
@@ -488,7 +533,7 @@ test("fast mode: a product goes from link to finished Drive folder in a single r
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude), fastMode);
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.run("tick");
   assert.match(String(p.rows()[0][1]), /✓/, "status after one run: " + p.rows()[0][1]);
   assert.equal(claude.batches.size, 0, "used batch jobs");
@@ -498,7 +543,7 @@ test("fast mode: 12 products finish in one run, fetched and written in parallel"
   const claude = fakeClaude(normal);
   const p = loadProject(web(claude), fastMode);
   p.addLinks(Array.from({ length: 12 }, (_, i) => "https://maker.test/p/a100?n=" + i));
-  p.run("startRun");
+  p.start();
   p.run("tick");
   const done = p.rows().filter((r) => /✓/.test(r[1])).length;
   assert.equal(done, 12, "finished after one run: " + done);
@@ -512,7 +557,7 @@ test("fast mode: a direct call that runs past Google's 60s limit continues as a 
   });
   const p = loadProject(web(claude), fastMode);
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   assert.match(String(p.rows()[0][1]), /✓/, "status " + p.rows()[0][1] + " " + p.rows()[0][5]);
   assert.equal(claude.direct.filter((x) => !x.tools).length, 1, "direct write retried after a timeout (money wasted)");
@@ -527,7 +572,7 @@ test("fast mode: Claude busy (529) on a direct call: retried, and after 3 times 
   });
   const p = loadProject(web(claude), fastMode);
   p.addLinks(["https://maker.test/p/a100"]);
-  p.run("startRun");
+  p.start();
   p.runUntilIdle();
   assert.match(String(p.rows()[0][1]), /✓/, "status " + p.rows()[0][1] + " " + p.rows()[0][5]);
   assert.equal(busy, 3);

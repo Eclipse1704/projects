@@ -2,15 +2,7 @@
 // מדביקים את כל הקובץ הזה ב-Code.gs בעורך של Apps Script. הוראות: README.md
 
 // ======================================== Settings.gs ========================================
-// Default settings. They are written to the "הגדרות" sheet on first setup and can be edited there.
-
-var SHEET_PRODUCTS = 'מוצרים';
-var SHEET_SETTINGS = 'הגדרות';
-var SHEET_HELP = 'הוראות';
-
-// Products sheet columns (1-based).
-var COL = { LINK: 1, STATUS: 2, NAME: 3, MANUFACTURER: 4, FOLDER: 5, NOTES: 6, ID: 7 };
-var HEADERS = ['קישור למוצר', 'סטטוס', 'שם המוצר', 'יצרן', 'תיקייה בדרייב', 'הערות', 'מזהה'];
+// Default settings. They can be changed in the app's settings screen (saved in Script Properties).
 
 var SHORT_MAX_WORDS = 80;
 var FULL_MAX_WORDS = 500;
@@ -52,14 +44,7 @@ var SETTINGS_MEMO = null; // read once per run
 
 function readSettings() {
   if (SETTINGS_MEMO) return SETTINGS_MEMO;
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_SETTINGS);
-  var map = {};
-  DEFAULT_SETTINGS.forEach(function (row) { map[row[0]] = row[1]; });
-  if (sheet && sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues().forEach(function (r) {
-      if (r[0] && String(r[1]).trim() !== '') map[String(r[0]).trim()] = String(r[1]).trim();
-    });
-  }
+  var map = settingsMap();
   SETTINGS_MEMO = {
     rootFolder: map['תיקייה בדרייב'],
     model: map['מודל'],
@@ -68,11 +53,36 @@ function readSettings() {
     styleUrls: map['דפי דוגמה לסגנון'].split(/\s+/).filter(function (u) { return /^https?:\/\//.test(u); }),
     glossary: map['מילון מונחים'],
     avoidWords: String(map['מילים שלא משתמשים בהן'] || '').split('\n').map(function (w) { return w.trim(); }).filter(String),
-    // Stored for the whole spreadsheet, so the worker runs the same no matter which editor pressed 'run'.
+    // Stored for the whole script, so the background worker uses the same key.
     apiKey: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY') || PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
     apiBase: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
   };
   return SETTINGS_MEMO;
+}
+
+// Defaults with the user's changes on top: {label: value}.
+function settingsMap() {
+  var map = {};
+  DEFAULT_SETTINGS.forEach(function (row) { map[row[0]] = row[1]; });
+  var saved = {};
+  try { saved = JSON.parse(getBig('SETTINGS') || '{}'); } catch (e) {}
+  Object.keys(saved).forEach(function (k) {
+    if (map.hasOwnProperty(k) && String(saved[k]).trim() !== '') map[k] = String(saved[k]).trim();
+  });
+  return map;
+}
+
+// Saves only values that differ from the defaults, so improved defaults still reach old installs.
+function saveSettings(values) {
+  var out = {};
+  DEFAULT_SETTINGS.forEach(function (row) {
+    var v = values[row[0]];
+    if (v === undefined || v === null) return;
+    v = String(v).replace(/\r/g, '').trim();
+    if (v !== '' && v !== String(row[1]).trim()) out[row[0]] = v;
+  });
+  setBig('SETTINGS', JSON.stringify(out));
+  SETTINGS_MEMO = null;
 }
 
 // ======================================== Extract.gs ========================================
@@ -816,9 +826,9 @@ function saveAsGoogleDoc(folder, name, p) {
 }
 
 // ======================================== Main.gs ========================================
-// Product scraper -> Google Drive.
-// Paste product links in the "מוצרים" sheet, choose "סורק מוצרים ▸ הרץ". A 1-minute trigger then moves
-// every product through these steps until its Drive folder is ready:
+// Product scraper -> Google Drive (a Google Apps Script web app).
+// Links pasted in the app (App.gs) are queued here; a 1-minute trigger then moves every product
+// through these steps until its Drive folder is ready:
 //   new -> research (Claude batch: manufacturer + official site) -> official (read official pages)
 //       -> write (Claude batch: Hebrew text + choose images/PDFs/videos) -> save (Drive folder) -> done
 
@@ -844,141 +854,39 @@ var STATUS = {
   stopped: 'נעצר',
 };
 
-// ---------------- Menu & setup ----------------
+// ---------------- Setup ----------------
 
-function onOpen() {
-  try { ensureOwnCopy(); setup(); } catch (e) {}   // first open after install / copy: create the sheets
-  SpreadsheetApp.getUi().createMenu('סורק מוצרים')
-    .addItem('▶ פתח את הסורק', 'openScraper')
-    .addSeparator()
-    .addItem('הרץ על הקישורים בגיליון', 'startRun')
-    .addItem('הגדרת מפתח API של Claude', 'setApiKey')
-    .addItem('מצב המערכת', 'showStatus')
-    .addSeparator()
-    .addItem('■ עצור', 'stopRun')
-    .addToUi();
-}
-
-// Copying the spreadsheet ("make a copy" link) also copies the script's saved properties.
+// Copying the script ("make a copy") also copies its saved properties.
 // A copy must not use the original's API key or work queue: start clean.
 function ensureOwnCopy() {
   var props = PropertiesService.getScriptProperties();
-  var id = SpreadsheetApp.getActive().getId();
-  var owner = props.getProperty('SHEET_ID');
+  var id = ScriptApp.getScriptId();
+  var owner = props.getProperty('SCRIPT_ID');
   if (owner === id) return;
   if (owner) props.deleteAllProperties();
-  props.setProperty('SHEET_ID', id);
+  props.setProperty('SCRIPT_ID', id);
 }
 
-var HELP = [
-  ['איך משתמשים'],
-  ['1. בתפריט למעלה: סורק מוצרים ← ▶ פתח את הסורק. נפתח חלון בצד (מהפעם השנייה הוא נפתח לבד).'],
-  ['2. בפעם הראשונה: Google מבקשת אישור - Continue ← בוחרים חשבון ← Advanced ← Go to … (unsafe) ← Allow.'],
-  ['   ואז מדביקים בחלון את מפתח ה-API של Claude (מ-console.anthropic.com).'],
-  ['3. מדביקים בחלון קישורים למוצרים ולוחצים "התחל". בחלון רואים את ההתקדמות של כל מוצר.'],
-  ['4. כשמוצר מוכן לוחצים "פתח תיקייה". אפשר גם לסגור הכל - העבודה ממשיכה ברקע ונשלח מייל בסיום.'],
-  [''],
-  ['בכל מוצר בתיקייה: דף HTML בעברית, מסמך לקריאה, תיקיית תמונות, ברושור ומדריך למשתמש (מאתר היצרן הרשמי).'],
-  ['מילה שיצאה לא טוב בעברית? מוסיפים אותה בגיליון "הגדרות" (מילון מונחים / מילים שלא משתמשים בהן).'],
-];
-
-function setup() {
-  var ss = SpreadsheetApp.getActive();
-  var products = ss.getSheetByName(SHEET_PRODUCTS) || ss.insertSheet(SHEET_PRODUCTS, 0);
-  if (products.getLastRow() === 0) {
-    products.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
-    products.setFrozenRows(1);
-    products.setRightToLeft(true);
-    products.setColumnWidth(COL.LINK, 360);
-    products.setColumnWidth(COL.STATUS, 220);
-    products.setColumnWidth(COL.NAME, 320);
-    products.setColumnWidth(COL.FOLDER, 200);
-    products.setColumnWidth(COL.NOTES, 360);
-    products.hideColumns(COL.ID);
-  }
-  var help = ss.getSheetByName(SHEET_HELP) || ss.insertSheet(SHEET_HELP);
-  if (help.getLastRow() === 0) {
-    help.getRange(1, 1, HELP.length, 1).setValues(HELP);
-    help.getRange(1, 1).setFontWeight('bold');
-    help.setRightToLeft(true);
-    help.setColumnWidth(1, 900);
-  }
-  var settings = ss.getSheetByName(SHEET_SETTINGS) || ss.insertSheet(SHEET_SETTINGS);
-  if (settings.getLastRow() === 0) {
-    settings.getRange(1, 1, 1, 3).setValues([['הגדרה', 'ערך', 'הסבר']]).setFontWeight('bold');
-    settings.getRange(2, 1, DEFAULT_SETTINGS.length, 3).setValues(DEFAULT_SETTINGS).setWrap(true).setVerticalAlignment('top');
-    settings.setRightToLeft(true);
-    settings.setColumnWidth(1, 160);
-    settings.setColumnWidth(2, 520);
-    settings.setColumnWidth(3, 320);
-  }
-}
-
-function setApiKey() {
-  ensureOwnCopy();
-  var ui = SpreadsheetApp.getUi();
-  var r = ui.prompt('מפתח API של Claude', 'הדביקו את המפתח מ-console.anthropic.com (נשמר בגיליון הזה בלבד, לא מוצג לאף אחד):', ui.ButtonSet.OK_CANCEL);
-  if (r.getSelectedButton() !== ui.Button.OK) return;
-  var key = r.getResponseText().trim();
-  if (key) {
-    PropertiesService.getScriptProperties().setProperty('ANTHROPIC_API_KEY', key);
-    SETTINGS_MEMO = null;
-    ui.alert('המפתח נשמר ✓');
-  }
-}
-
-function startRun() {
-  ensureOwnCopy();
-  setup();
-  if (!readSettings().apiKey) {
-    setApiKey();
-    SETTINGS_MEMO = null;
-    if (!readSettings().apiKey) return;
-  }
-  var added = queueSheetRows();
-  if (added === null) {
-    SpreadsheetApp.getUi().alert('הדביקו קישורים למוצרים בעמודה "קישור למוצר" (קישור בכל שורה) ואז הריצו שוב.');
-  } else if (!added) {
-    SpreadsheetApp.getUi().alert('אין קישורים חדשים להרצה. (שורות שכבר הושלמו לא רצות שוב; כדי להריץ שוב מוחקים את הסטטוס.)');
-  } else {
-    SpreadsheetApp.getActive().toast(added + ' מוצרים נכנסו לתור. העבודה מתחילה תוך דקה וממשיכה ברקע - אפשר לסגור את הגיליון.', 'סורק מוצרים', 10);
-  }
-}
-
-// Puts every sheet row with a link and no status (or 'stopped' / error) in the queue and starts the
-// background worker. Returns how many were added, or null when the sheet has no rows at all.
-function queueSheetRows() {
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
-  var n = sheet.getLastRow() - 1;
-  if (n < 1) return null;
+// Queues links and starts the background worker. Returns how many were added.
+function queueLinks(links) {
   var lock = LockService.getScriptLock();
   lock.waitLock(60000);   // the worker may be running right now
-  var added = 0;
   try {
-    var rows = sheet.getRange(2, 1, n, HEADERS.length).getValues();
+    var list = getItems();
     var stages = getStages();
     var stamp = Date.now().toString(36);
-    rows.forEach(function (r, i) {
-      var link = String(r[COL.LINK - 1]).trim();
-      var status = String(r[COL.STATUS - 1]).trim();
-      if (!/^https?:\/\//i.test(link) || (status && status !== STATUS.stopped && status.indexOf(STATUS.error) !== 0)) return;
-      var id = 'p' + stamp + 'r' + (i + 2);
-      r[COL.ID - 1] = id;
-      r[COL.STATUS - 1] = STATUS.queued;
-      r[COL.NOTES - 1] = '';
+    links.forEach(function (link, i) {
+      var id = 'p' + stamp + 'n' + i;
+      list.push({ id: id, link: link, status: STATUS.queued, name: '', manufacturer: '', folderUrl: '', notes: '', added: new Date().toISOString() });
       saveState({ id: id, link: link, stage: 'new', writeAttempts: 0, researchAttempts: 0, researchPauses: 0, stepTries: {}, warnings: [] }, stages);
-      added++;
-    });
-    // One write for the whole sheet (only the status, notes and id columns change).
-    [COL.STATUS, COL.NOTES, COL.ID].forEach(function (c) {
-      sheet.getRange(2, c, n, 1).setValues(rows.map(function (r) { return [r[c - 1]]; }));
     });
     setStages(stages);
+    flushItems();
   } finally {
     lock.releaseLock();
   }
-  if (added) setTriggerEvery(1);
-  return added;
+  if (links.length) setTriggerEvery(1);
+  return links.length;
 }
 
 function stopRun() {
@@ -991,6 +899,7 @@ function stopRun() {
       try { claudeRequest(settings, 'post', '/v1/messages/batches/' + b.id + '/cancel'); } catch (e) {}
     });
     Object.keys(getStages()).forEach(function (id) { setRowStatus(id, STATUS.stopped); });
+    flushItems();
     setStages({});
     setBatches([]);
     stateFolder(settings).setTrashed(true);
@@ -1029,20 +938,27 @@ function setBatches(b) { setBig('BATCHES', JSON.stringify(b)); }
 
 // Script Properties hold at most 9KB per value: long values are split into numbered parts.
 var PART_CHARS = 2500;   // Hebrew/UTF-8 safe: 2500 chars <= 9KB
+// The parts this execution last read or wrote, so unchanged parts aren't written again
+// (Script Properties have a daily read/write quota). Every writer holds the script lock.
+var BIG_SEEN = {};
 function getBig(key) {
   var props = PropertiesService.getScriptProperties();
   var n = parseInt(props.getProperty(key + '_parts') || '0', 10);
-  var out = '';
-  for (var i = 0; i < n; i++) out += props.getProperty(key + '_' + i) || '';
-  return out;
+  var parts = [];
+  for (var i = 0; i < n; i++) parts.push(props.getProperty(key + '_' + i) || '');
+  BIG_SEEN[key] = parts;
+  return parts.join('');
 }
 function setBig(key, value) {
   var props = PropertiesService.getScriptProperties();
-  var old = parseInt(props.getProperty(key + '_parts') || '0', 10);
-  var n = Math.ceil(value.length / PART_CHARS);
-  for (var i = 0; i < n; i++) props.setProperty(key + '_' + i, value.slice(i * PART_CHARS, (i + 1) * PART_CHARS));
-  for (var j = n; j < old; j++) props.deleteProperty(key + '_' + j);
-  props.setProperty(key + '_parts', String(n));
+  var seen = BIG_SEEN[key];
+  var old = seen ? seen.length : parseInt(props.getProperty(key + '_parts') || '0', 10);
+  var parts = [];
+  for (var i = 0; i * PART_CHARS < value.length; i++) parts.push(value.slice(i * PART_CHARS, (i + 1) * PART_CHARS));
+  parts.forEach(function (part, i) { if (!seen || seen[i] !== part) props.setProperty(key + '_' + i, part); });
+  for (var j = parts.length; j < old; j++) props.deleteProperty(key + '_' + j);
+  if (!seen || seen.length !== parts.length) props.setProperty(key + '_parts', String(parts.length));
+  BIG_SEEN[key] = parts;
 }
 
 function loadState(id) {
@@ -1063,31 +979,37 @@ function saveState(p, stages) {
   if (!stages) setStages(m);
 }
 
-function findRow(id) {
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
-  var n = sheet.getLastRow() - 1;
-  if (n < 1) return 0;
-  var ids = sheet.getRange(2, COL.ID, n, 1).getValues();
-  for (var i = 0; i < ids.length; i++) if (ids[i][0] === id) return i + 2;
-  return 0;
+// The list the app shows: one entry per link ever queued (newest last). Kept in memory during a run
+// and written once at the end (Script Properties have a daily write quota).
+var MAX_ITEMS = 200;
+var ITEMS_MEMO = null;
+var ITEMS_DIRTY = false;
+
+function getItems() {
+  if (!ITEMS_MEMO) ITEMS_MEMO = JSON.parse(getBig('ITEMS') || '[]');
+  return ITEMS_MEMO;
 }
 
-// Text from websites/Claude starting with = + - @ would become a formula.
-function asText(v) {
-  v = String(v === undefined || v === null ? '' : v);
-  return /^[=+\-@]/.test(v) ? "'" + v : v;
+function flushItems() {
+  if (!ITEMS_MEMO) return;
+  var list = ITEMS_MEMO;
+  if (list.length > MAX_ITEMS) {   // forget the oldest finished products
+    var active = getStages();
+    var extra = list.length - MAX_ITEMS;
+    list = list.filter(function (it) { if (extra > 0 && !active[it.id]) { extra--; return false; } return true; });
+    ITEMS_MEMO = list;
+  }
+  setBig('ITEMS', JSON.stringify(list));
+  ITEMS_DIRTY = false;
 }
 
 function setRowStatus(id, status, extra) {
-  var row = findRow(id);
-  if (!row) return;
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
-  sheet.getRange(row, COL.STATUS).setValue(status);
+  var it = getItems().filter(function (x) { return x.id === id; })[0];
+  if (!it) return;
+  it.status = status;
   extra = extra || {};
-  if (extra.name !== undefined) sheet.getRange(row, COL.NAME).setValue(asText(extra.name));
-  if (extra.manufacturer !== undefined) sheet.getRange(row, COL.MANUFACTURER).setValue(asText(extra.manufacturer));
-  if (extra.folderUrl) sheet.getRange(row, COL.FOLDER).setFormula('=HYPERLINK("' + extra.folderUrl + '","פתח תיקייה")');
-  if (extra.notes !== undefined) sheet.getRange(row, COL.NOTES).setValue(asText(extra.notes));
+  ['name', 'manufacturer', 'folderUrl', 'notes'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
+  ITEMS_DIRTY = true;
 }
 
 // ---------------- The worker (runs every minute until everything is done) ----------------
@@ -1105,38 +1027,29 @@ function tick() {
   } catch (e) {
     reportCrash(e);
   } finally {
-    lock.releaseLock();
+    try { if (ITEMS_DIRTY) flushItems(); } finally { lock.releaseLock(); }
   }
 }
 
-// A background run that crashes would otherwise fail silently: show it on the rows and in "מצב המערכת".
+// A background run that crashes would otherwise fail silently: show it on the products and in the app.
 function reportCrash(e) {
   var msg = String(e && e.message || e);
   PropertiesService.getScriptProperties().setProperty('LAST_ERROR', new Date().toISOString() + ' ' + msg);
   try {
-    Object.keys(getStages()).forEach(function (id) {
-      var row = findRow(id);
-      if (row) SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS).getRange(row, COL.NOTES).setValue(asText('תקלה בהרצה ברקע (מנסה שוב כל דקה): ' + msg));
-    });
+    Object.keys(getStages()).forEach(function (id) { setRowStatus(id, STATUS.queued, { notes: 'תקלה בהרצה ברקע (מנסה שוב כל דקה): ' + msg }); });
   } catch (e2) {}
 }
 
-// Menu: is the background worker running, when did it last run, what went wrong.
-function showStatus() {
+// For the app: is the background worker running, when did it last run, what went wrong.
+function workerStatus() {
   var props = PropertiesService.getScriptProperties();
-  var stages = getStages();
-  var count = {};
-  Object.keys(stages).forEach(function (id) { count[stages[id]] = (count[stages[id]] || 0) + 1; });
-  var trigger = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; });
-  var fmt = function (iso) { return iso ? Utilities.formatDate(new Date(iso), Session.getScriptTimeZone(), 'dd/MM HH:mm:ss') : 'אף פעם'; };
   var lastError = props.getProperty('LAST_ERROR') || '';
-  SpreadsheetApp.getUi().alert('מצב המערכת',
-    'עבודה ברקע: ' + (trigger ? 'פעילה ✓' : 'לא פעילה') + '\n' +
-    'הרצה אחרונה: ' + fmt(props.getProperty('LAST_RUN')) + '\n' +
-    'מוצרים בעבודה: ' + (Object.keys(stages).length ? JSON.stringify(count) : 'אין') + '\n' +
-    'מפתח API: ' + (readSettings().apiKey ? 'מוגדר ✓' : 'חסר') + '\n' +
-    'תקלה אחרונה: ' + (lastError ? fmt(lastError.split(' ')[0]) + ' - ' + lastError.slice(lastError.indexOf(' ') + 1) : 'אין'),
-    SpreadsheetApp.getUi().ButtonSet.OK);
+  return {
+    running: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; }),
+    lastRun: props.getProperty('LAST_RUN') || '',
+    lastError: lastError ? lastError.slice(lastError.indexOf(' ') + 1) : '',
+    lastErrorAt: lastError ? lastError.split(' ')[0] : '',
+  };
 }
 
 // Everything one background run does.
@@ -1147,11 +1060,15 @@ function work() {
     recoverLostWaits();
     // Take every product as far as it can go in this run - all products together, stage after stage.
     for (var round = 0; round < 10 && timeLeft() > 45000; round++) {
+      // After each stage the list is saved, so the app shows progress while this run goes on.
       var moved = runLocalStage(settings, 'new');
       if (settings.fast) moved = runClaudeNow(settings, 'research') || moved;
+      if (ITEMS_DIRTY) flushItems();
       moved = runLocalStage(settings, 'official') || moved;
       if (settings.fast) moved = runClaudeNow(settings, 'write') || moved;
+      if (ITEMS_DIRTY) flushItems();
       moved = runLocalStage(settings, 'save') || moved;
+      if (ITEMS_DIRTY) flushItems();
       if (!moved) break;
     }
     submitBatches(settings, 'research');
@@ -1707,36 +1624,28 @@ function finishIfDone(settings) {
   stateFolder(settings).setTrashed(true);
   FOLDER_MEMO.state = null;
   if (!had.length || !settings.email) return;
-  var ss = SpreadsheetApp.getActive();
   try {
+    var appUrl = '';
+    try { appUrl = ScriptApp.getService().getUrl() || ''; } catch (e) {}
     MailApp.sendEmail(Session.getEffectiveUser().getEmail(), 'סורק מוצרים: הסריקה הסתיימה',
-      'כל המוצרים עובדו. הסטטוסים והקישורים לתיקיות בגיליון:\n' + ss.getUrl() + '\n\nהתיקייה בדרייב: ' + rootFolder(settings).getUrl());
+      'כל המוצרים עובדו.' + (appUrl ? '\nבאפליקציה: ' + appUrl : '') + '\n\nהתיקייה בדרייב: ' + rootFolder(settings).getUrl());
   } catch (e) {
     console.warn('email not sent: ' + e.message);
   }
 }
 
-// ======================================== Sidebar.gs ========================================
-// The scraper window (a sidebar next to the sheet): paste links, press start, watch progress, open folders.
+// ======================================== App.gs ========================================
+// The app: a web page (Deploy -> Web app) where you paste links, press start, watch progress, open folders
+// and change the settings. No spreadsheet needed; everything is saved in the script and in Google Drive.
 
-function openScraper() {
+function doGet() {
   ensureOwnCopy();
-  setup();
-  ensureAutoOpen();
-  SpreadsheetApp.getUi().showSidebar(HtmlService.createHtmlOutput(SIDEBAR_HTML).setTitle('סורק מוצרים'));
+  return HtmlService.createHtmlOutput(APP_HTML)
+    .setTitle('סורק מוצרים')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-// After the first (authorized) use, the window opens by itself whenever the spreadsheet is opened.
-function ensureAutoOpen() {
-  var has = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'autoOpenScraper'; });
-  if (!has) ScriptApp.newTrigger('autoOpenScraper').forSpreadsheet(SpreadsheetApp.getActive()).onOpen().create();
-}
-
-function autoOpenScraper() {
-  try { openScraper(); } catch (e) {}
-}
-
-// ---------- called from the window ----------
+// ---------- called from the page ----------
 
 // Built on use: STATUS lives in Main.gs, and Apps Script may load the files in any order.
 function steps() {
@@ -1753,47 +1662,30 @@ function steps() {
   ];
 }
 
-function sidebarState() {
+function appState() {
   ensureOwnCopy();
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
-  var items = [];
-  var n = sheet ? sheet.getLastRow() - 1 : 0;
-  if (n > 0) {
-    var first = Math.max(2, n + 2 - 40);   // the last 40 rows
-    var count = n + 2 - first;
-    var values = sheet.getRange(first, 1, count, HEADERS.length).getValues();
-    var formulas = sheet.getRange(first, COL.FOLDER, count, 1).getFormulas();
-    values.forEach(function (r, i) {
-      var link = String(r[COL.LINK - 1]).trim();
-      if (!/^https?:\/\//i.test(link)) return;
-      var status = String(r[COL.STATUS - 1]);
-      var step = steps().filter(function (s) { return status.indexOf(s[0]) === 0; })[0] || ['', status ? status : 'עוד לא התחיל', 0, status ? 'working' : 'idle'];
-      var folder = (String(formulas[i][0]).match(/HYPERLINK\("([^"]+)"/) || [])[1] || '';
-      items.push({
-        link: link, name: String(r[COL.NAME - 1]).replace(/^'/, ''), manufacturer: String(r[COL.MANUFACTURER - 1]).replace(/^'/, ''),
-        step: step[1], pct: step[2], state: step[3], folderUrl: folder, notes: String(r[COL.NOTES - 1]).replace(/^'/, ''),
-      });
-    });
-  }
-  return { hasKey: !!readSettings().apiKey, items: items.reverse() };
+  var items = getItems().slice(-60).reverse().map(function (it) {
+    var status = String(it.status || '');
+    var step = steps().filter(function (s) { return status.indexOf(s[0]) === 0; })[0] || ['', status || 'עוד לא התחיל', 0, status ? 'working' : 'idle'];
+    return { link: it.link, name: it.name, manufacturer: it.manufacturer, step: step[1], pct: step[2], state: step[3], folderUrl: it.folderUrl, notes: it.notes };
+  });
+  return { hasKey: !!readSettings().apiKey, items: items, worker: workerStatus() };
 }
 
-function sidebarStart(text) {
+function appStart(text) {
   ensureOwnCopy();
-  setup();
   if (!readSettings().apiKey) return { ok: false, needKey: true, message: 'קודם מדביקים את מפתח ה-API למעלה.' };
   var seen = {};
   var links = (String(text || '').match(/https?:\/\/[^\s"'<>]+/gi) || [])
     .map(function (l) { return l.replace(/[),.;:!?]+$/, ''); })
     .filter(function (l) { if (seen[l]) return false; seen[l] = true; return true; });
   if (!links.length) return { ok: false, message: 'לא מצאתי קישורים. מדביקים קישורים שמתחילים ב-https://' };
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
-  sheet.getRange(sheet.getLastRow() + 1, COL.LINK, links.length, 1).setValues(links.map(function (l) { return [l]; }));
-  var added = queueSheetRows() || 0;
-  return { ok: true, message: added === 1 ? 'מוצר אחד התחיל. אפשר לסגור הכל - העבודה ממשיכה ברקע.' : added + ' מוצרים התחילו. אפשר לסגור הכל - העבודה ממשיכה ברקע.' };
+  PropertiesService.getScriptProperties().deleteProperty('LAST_ERROR');
+  var added = queueLinks(links);
+  return { ok: true, message: added === 1 ? 'מוצר אחד התחיל. אפשר לסגור את הדף - העבודה ממשיכה ברקע.' : added + ' מוצרים התחילו. אפשר לסגור את הדף - העבודה ממשיכה ברקע.' };
 }
 
-function sidebarSaveKey(key) {
+function appSaveKey(key) {
   ensureOwnCopy();
   key = String(key || '').trim();
   if (!/^sk-ant-/.test(key)) return { ok: false, message: 'המפתח מתחיל ב-sk-ant-. מעתיקים אותו שוב מ-console.anthropic.com' };
@@ -1807,20 +1699,47 @@ function sidebarSaveKey(key) {
   return { ok: true, message: 'המפתח נשמר ✓' };
 }
 
-function sidebarStop() {
+function appStop() {
   stopRun();
-  return sidebarState();
+  return appState();
 }
 
-function sidebarOpenSettings() {
-  var ss = SpreadsheetApp.getActive();
-  ss.setActiveSheet(ss.getSheetByName(SHEET_SETTINGS));
+// Removes finished products from the list (their Drive folders stay).
+function appClearFinished() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(60000);
+  try {
+    var active = getStages();
+    ITEMS_MEMO = getItems().filter(function (it) { return active[it.id]; });
+    flushItems();
+  } finally {
+    lock.releaseLock();
+  }
+  return appState();
 }
 
-var SIDEBAR_HTML = `<!doctype html>
+function appGetSettings() {
+  ensureOwnCopy();
+  var key = readSettings().apiKey;
+  return { values: settingsMap(), hasKey: !!key, keyEnd: key ? key.slice(-4) : '' };
+}
+
+function appSaveSettings(values) {
+  saveSettings(values || {});
+  return appGetSettings();
+}
+
+function appResetSettings() {
+  setBig('SETTINGS', '');
+  SETTINGS_MEMO = null;
+  return appGetSettings();
+}
+
+var APP_HTML = `<!doctype html>
 <html lang="he" dir="rtl">
 <head>
 <meta charset="utf-8">
+<title>סורק מוצרים</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap">
 <style>
   :root {
@@ -1832,9 +1751,9 @@ var SIDEBAR_HTML = `<!doctype html>
   * { box-sizing:border-box; }
   [hidden] { display:none !important; }
   html, body { overflow-x:hidden; }
-  body { margin:0; padding:0 0 16px; font:14px/1.5 "Heebo", "Segoe UI", Arial, sans-serif; color:var(--ink); background:var(--bg); }
-  .brand { height:4px; background:linear-gradient(90deg, var(--red) 0 70%, var(--ink) 70% 100%); }
-  .wrap { padding:14px 12px 0; display:grid; gap:12px; }
+  body { margin:0; padding:0 0 32px; font:14px/1.5 "Heebo", "Segoe UI", Arial, sans-serif; color:var(--ink); background:var(--bg); }
+  .brand { height:4px; background:var(--red); }
+  .wrap { max-width:760px; margin:0 auto; padding:18px 16px 0; display:grid; gap:14px; }
   .card { background:var(--card); border-radius:12px; box-shadow:var(--shadow); padding:14px; display:grid; gap:10px; }
   .label { font-weight:700; font-size:15px; margin:0; }
   .hint { font-size:12px; color:var(--muted); margin:-6px 0 0; }
@@ -1890,16 +1809,50 @@ var SIDEBAR_HTML = `<!doctype html>
   details { font-size:12px; color:var(--ink-2); } summary { cursor:pointer; color:var(--muted); font-weight:500; }
   details[open] summary { margin-bottom:4px; }
   .empty { text-align:center; color:var(--muted); font-size:13px; padding:18px 8px; border:1.5px dashed #d4d6d9; border-radius:12px; }
-  .foot { display:flex; justify-content:space-between; padding:14px 14px 0; }
+  .foot { max-width:760px; margin:0 auto; display:flex; justify-content:flex-end; padding:16px 18px 0; }
   .link { background:none; border:0; padding:0; cursor:pointer; font:500 12.5px "Heebo", Arial, sans-serif; color:var(--muted); }
   .link:hover { color:var(--ink); }
   .link.danger { color:var(--red); }
   @media (prefers-reduced-motion: reduce) { .working .dot, .steps .now::before { animation:none; } }
+
+  .top { background:var(--ink); color:#fff; }
+  .top .in { max-width:760px; margin:0 auto; padding:14px 16px; display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .title { margin:0; font:800 19px "Heebo", Arial, sans-serif; letter-spacing:.2px; display:flex; align-items:center; gap:10px; }
+  .title i { width:10px; height:22px; background:var(--red); border-radius:2px; display:inline-block; }
+  .tab { background:none; border:1.5px solid rgba(255,255,255,.35); color:#fff; border-radius:8px; padding:6px 12px; cursor:pointer;
+    font:500 13px "Heebo", Arial, sans-serif; display:inline-flex; align-items:center; gap:6px; transition:border-color .15s, background .15s; }
+  .tab:hover { border-color:#fff; background:rgba(255,255,255,.08); }
+  .tab svg { width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:2; }
+  .worker { font-size:12px; color:var(--muted); display:flex; align-items:center; gap:6px; padding:0 2px; }
+  .worker:empty { display:none; }
+  .worker b { width:8px; height:8px; border-radius:50%; background:var(--ok); display:inline-block; flex:none; }
+  .worker.bad { color:var(--red); } .worker.bad b { background:var(--red); }
+  .field { display:grid; gap:6px; }
+  .field label { font-weight:700; font-size:14px; }
+  .field .hint { margin:0; }
+  .field textarea.rtl, .field input.rtl { direction:rtl; text-align:right; font-family:"Heebo", Arial, sans-serif; }
+  .field textarea.tall { min-height:160px; }
+  .seg { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  .seg button { font:500 13px "Heebo", Arial, sans-serif; border:1.5px solid var(--line); background:#fbfbfb; color:var(--ink-2);
+    border-radius:8px; padding:9px 8px; cursor:pointer; text-align:center; line-height:1.3; }
+  .seg button small { display:block; font-size:11px; color:var(--muted); font-weight:400; }
+  .seg button.sel { border-color:var(--red); background:var(--red-soft); color:var(--red); font-weight:700; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  @media (max-width:560px) { .grid2 { grid-template-columns:1fr; } .top .in { padding:12px 16px; } .title { font-size:17px; } }
+  .ghost { font:700 14px "Heebo", Arial, sans-serif; border:1.5px solid var(--line); border-radius:8px; padding:10px; cursor:pointer; background:#fff; color:var(--ink-2); width:100%; }
+  .ghost:hover { border-color:var(--ink); color:var(--ink); }
+  .row { display:flex; gap:10px; } .row > * { flex:1; }
+  .sub { font-size:12px; color:var(--muted); margin:0; }
 </style>
 </head>
 <body>
+  <header class="top"><div class="in">
+    <h1 class="title"><i aria-hidden="true"></i>סורק מוצרים</h1>
+    <button id="tab" class="tab" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span>הגדרות</span></button>
+  </div></header>
   <div class="brand"></div>
-  <div class="wrap">
+
+  <main id="home" class="wrap">
     <section id="keyCard" class="card key" hidden>
       <p class="label">צעד אחד לפני שמתחילים</p>
       <p>מדביקים מפתח API של Claude. יוצרים אותו ב-<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> ← Create Key.</p>
@@ -1910,20 +1863,85 @@ var SIDEBAR_HTML = `<!doctype html>
 
     <section class="card">
       <p class="label">קישורים למוצרים</p>
-      <p class="hint">אחד או הרבה, מכל אתר</p>
+      <p class="hint">אחד או הרבה, מכל אתר. כל מוצר מקבל תיקייה משלו ב-Google Drive.</p>
       <textarea id="links" placeholder="https://..."></textarea>
       <button id="start" class="primary" type="button"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 0l8 5-8 5z"/></svg>התחל</button>
       <p id="msg" class="msg" role="status"></p>
     </section>
 
+    <div id="worker" class="worker"></div>
     <div id="summary" class="summary"></div>
     <div id="list" class="list" aria-live="polite"></div>
-  </div>
+    <div class="foot" style="padding:0; gap:18px">
+      <button id="clear" class="link" type="button" hidden>נקה מוצרים שהסתיימו מהרשימה</button>
+      <button id="stop" class="link danger" type="button" hidden>עצור הכל</button>
+    </div>
+  </main>
 
-  <div class="foot">
-    <button id="settings" class="link" type="button">הגדרות</button>
-    <button id="stop" class="link danger" type="button">עצור הכל</button>
-  </div>
+  <main id="settingsView" class="wrap" hidden>
+    <section class="card">
+      <div class="grid2">
+        <div class="field">
+          <label>מהירות</label>
+          <div class="seg" data-key="מצב מהיר">
+            <button type="button" data-v="כן">מהיר<small>מוכן תוך דקות · כ-0.4$ למוצר</small></button>
+            <button type="button" data-v="לא">חסכוני<small>עד שעה · כ-0.2$ למוצר</small></button>
+          </div>
+        </div>
+        <div class="field">
+          <label>מודל</label>
+          <div class="seg" data-key="מודל">
+            <button type="button" data-v="claude-sonnet-5">Sonnet<small>מומלץ</small></button>
+            <button type="button" data-v="claude-opus-5">Opus<small>חזק יותר · פי 2.5 במחיר</small></button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="s-folder">תיקייה בדרייב</label>
+          <input id="s-folder" class="rtl" data-key="תיקייה בדרייב">
+        </div>
+        <div class="field">
+          <label>מייל כשהסריקה מסתיימת</label>
+          <div class="seg" data-key="שליחת מייל בסיום">
+            <button type="button" data-v="כן">כן</button>
+            <button type="button" data-v="לא">לא</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="field">
+        <label for="s-glossary">מילון מונחים</label>
+        <p class="hint">שורה לכל מונח: אנגלית = איך אומרים אצלנו. מילה שיצאה לא טוב? מוסיפים אותה כאן.</p>
+        <textarea id="s-glossary" class="tall" data-key="מילון מונחים"></textarea>
+      </div>
+      <div class="field">
+        <label for="s-avoid">מילים שלא משתמשים בהן</label>
+        <p class="hint">מילה או ביטוי בכל שורה. אם Claude משתמש באחד מהם, הטקסט חוזר אליו לתיקון.</p>
+        <textarea id="s-avoid" class="rtl" data-key="מילים שלא משתמשים בהן"></textarea>
+      </div>
+      <div class="field">
+        <label for="s-style">דפי דוגמה לסגנון</label>
+        <p class="hint">דפי מוצר מהאתר שלכם, כתובת בכל שורה. Claude כותב באותו סגנון.</p>
+        <textarea id="s-style" data-key="דפי דוגמה לסגנון"></textarea>
+      </div>
+    </section>
+
+    <div class="row">
+      <button id="saveSettings" class="primary" type="button">שמור הגדרות</button>
+      <button id="back" class="ghost" type="button">חזרה</button>
+    </div>
+    <p id="setMsg" class="msg" role="status"></p>
+
+    <section class="card">
+      <p class="label">מפתח API של Claude</p>
+      <p id="keyState" class="sub"></p>
+      <input id="key2" type="password" placeholder="sk-ant-... (מפתח חדש)" autocomplete="off">
+      <button id="saveKey2" class="ghost" type="button">החלף מפתח</button>
+      <p id="keyMsg2" class="msg" role="status"></p>
+    </section>
+    <button id="reset" class="link" type="button" style="justify-self:start">החזר הגדרות ברירת מחדל</button>
+  </main>
 
 <script>
   var $ = function (id) { return document.getElementById(id); };
@@ -1957,6 +1975,10 @@ var SIDEBAR_HTML = `<!doctype html>
 
   function render(state) {
     $('keyCard').hidden = state.hasKey;
+    var w = state.worker || {};
+    $('worker').className = 'worker' + (w.lastError ? ' bad' : '');
+    $('worker').innerHTML = w.lastError ? '<b></b>תקלה בהרצה ברקע, המערכת מנסה שוב: ' + esc(w.lastError)
+      : w.running ? '<b></b>עובד ברקע. אפשר לסגור את הדף.' : '';
     var items = state.items || [];
     var n = { done: 0, working: 0, other: 0 };
     items.forEach(function (it) { if (it.state === 'done' || it.state === 'warn') n.done++; else if (it.state === 'working') n.working++; else n.other++; });
@@ -1980,12 +2002,14 @@ var SIDEBAR_HTML = `<!doctype html>
           '</article>';
       }).join('');
     }
+    $('stop').hidden = !n.working;
+    $('clear').hidden = !(items.length - n.working);
     clearTimeout(timer);
     timer = setTimeout(refresh, n.working ? 5000 : 30000);
   }
 
   function refresh() {
-    google.script.run.withSuccessHandler(render).withFailureHandler(function () { timer = setTimeout(refresh, 15000); }).sidebarState();
+    google.script.run.withSuccessHandler(render).withFailureHandler(function () { timer = setTimeout(refresh, 15000); }).appState();
   }
 
   function say(el, text, good) { el.textContent = text || ''; el.className = 'msg ' + (good ? 'good' : 'bad'); }
@@ -2000,11 +2024,64 @@ var SIDEBAR_HTML = `<!doctype html>
       say($('msg'), r.message, r.ok);
       if (r.ok) $('links').value = '';
       if (r.needKey) $('keyCard').hidden = false;
-      refresh();
+      $('clear').addEventListener('click', function () { google.script.run.withSuccessHandler(render).appClearFinished(); });
+
+  // ---------- settings ----------
+  var values = {};
+  function showSettings(show) {
+    $('home').hidden = show; $('settingsView').hidden = !show;
+    $('tab').querySelector('span').textContent = show ? 'חזרה' : 'הגדרות';
+    say($('setMsg'), ''); say($('keyMsg2'), '');
+    if (show) google.script.run.withSuccessHandler(fillSettings).appGetSettings();
+    window.scrollTo(0, 0);
+  }
+  function fillSettings(r) {
+    values = r.values;
+    document.querySelectorAll('#settingsView [data-key]').forEach(function (el) {
+      var v = values[el.getAttribute('data-key')] || '';
+      if (el.classList.contains('seg')) el.querySelectorAll('button').forEach(function (b) { b.classList.toggle('sel', b.getAttribute('data-v') === v); });
+      else el.value = v;
+    });
+    $('keyState').textContent = r.hasKey ? 'שמור מפתח שמסתיים ב-' + r.keyEnd : 'עוד לא נשמר מפתח.';
+  }
+  document.querySelectorAll('.seg button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      b.parentNode.querySelectorAll('button').forEach(function (x) { x.classList.toggle('sel', x === b); });
+    });
+  });
+  function collect() {
+    var out = {};
+    document.querySelectorAll('#settingsView [data-key]').forEach(function (el) {
+      if (el.classList.contains('seg')) { var s = el.querySelector('.sel'); if (s) out[el.getAttribute('data-key')] = s.getAttribute('data-v'); }
+      else out[el.getAttribute('data-key')] = el.value;
+    });
+    return out;
+  }
+  $('tab').addEventListener('click', function () { showSettings($('settingsView').hidden); });
+  $('back').addEventListener('click', function () { showSettings(false); });
+  $('saveSettings').addEventListener('click', function () {
+    $('saveSettings').disabled = true;
+    google.script.run.withSuccessHandler(function (r) {
+      $('saveSettings').disabled = false; fillSettings(r); say($('setMsg'), 'ההגדרות נשמרו ✓. הן ישמשו מהסריקה הבאה.', true);
+    }).withFailureHandler(function (e) { $('saveSettings').disabled = false; say($('setMsg'), 'משהו השתבש: ' + (e && e.message || e)); }).appSaveSettings(collect());
+  });
+  $('reset').addEventListener('click', function () {
+    google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('setMsg'), 'חזרנו להגדרות ברירת המחדל ✓', true); }).appResetSettings();
+  });
+  $('saveKey2').addEventListener('click', function () {
+    $('saveKey2').disabled = true;
+    say($('keyMsg2'), 'בודק את המפתח…', true);
+    google.script.run.withSuccessHandler(function (r) {
+      $('saveKey2').disabled = false; say($('keyMsg2'), r.message, r.ok);
+      if (r.ok) { $('key2').value = ''; google.script.run.withSuccessHandler(fillSettings).appGetSettings(); }
+    }).withFailureHandler(function (e) { $('saveKey2').disabled = false; say($('keyMsg2'), 'משהו השתבש: ' + (e && e.message || e)); }).appSaveKey($('key2').value);
+  });
+
+  refresh();
     }).withFailureHandler(function (e) {
       $('start').disabled = false;
       say($('msg'), 'משהו השתבש: ' + (e && e.message || e));
-    }).sidebarStart(text);
+    }).appStart(text);
   });
 
   $('saveKey').addEventListener('click', function () {
@@ -2017,7 +2094,7 @@ var SIDEBAR_HTML = `<!doctype html>
     }).withFailureHandler(function (e) {
       $('saveKey').disabled = false;
       say($('keyMsg'), 'משהו השתבש: ' + (e && e.message || e));
-    }).sidebarSaveKey($('key').value);
+    }).appSaveKey($('key').value);
   });
 
   $('stop').addEventListener('click', function () {
@@ -2029,10 +2106,62 @@ var SIDEBAR_HTML = `<!doctype html>
     }
     stopArmed = false;
     $('stop').textContent = 'עצור הכל';
-    google.script.run.withSuccessHandler(render).sidebarStop();
+    google.script.run.withSuccessHandler(render).appStop();
   });
 
-  $('settings').addEventListener('click', function () { google.script.run.sidebarOpenSettings(); });
+
+  $('clear').addEventListener('click', function () { google.script.run.withSuccessHandler(render).appClearFinished(); });
+
+  // ---------- settings ----------
+  var values = {};
+  function showSettings(show) {
+    $('home').hidden = show; $('settingsView').hidden = !show;
+    $('tab').querySelector('span').textContent = show ? 'חזרה' : 'הגדרות';
+    say($('setMsg'), ''); say($('keyMsg2'), '');
+    if (show) google.script.run.withSuccessHandler(fillSettings).appGetSettings();
+    window.scrollTo(0, 0);
+  }
+  function fillSettings(r) {
+    values = r.values;
+    document.querySelectorAll('#settingsView [data-key]').forEach(function (el) {
+      var v = values[el.getAttribute('data-key')] || '';
+      if (el.classList.contains('seg')) el.querySelectorAll('button').forEach(function (b) { b.classList.toggle('sel', b.getAttribute('data-v') === v); });
+      else el.value = v;
+    });
+    $('keyState').textContent = r.hasKey ? 'שמור מפתח שמסתיים ב-' + r.keyEnd : 'עוד לא נשמר מפתח.';
+  }
+  document.querySelectorAll('.seg button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      b.parentNode.querySelectorAll('button').forEach(function (x) { x.classList.toggle('sel', x === b); });
+    });
+  });
+  function collect() {
+    var out = {};
+    document.querySelectorAll('#settingsView [data-key]').forEach(function (el) {
+      if (el.classList.contains('seg')) { var s = el.querySelector('.sel'); if (s) out[el.getAttribute('data-key')] = s.getAttribute('data-v'); }
+      else out[el.getAttribute('data-key')] = el.value;
+    });
+    return out;
+  }
+  $('tab').addEventListener('click', function () { showSettings($('settingsView').hidden); });
+  $('back').addEventListener('click', function () { showSettings(false); });
+  $('saveSettings').addEventListener('click', function () {
+    $('saveSettings').disabled = true;
+    google.script.run.withSuccessHandler(function (r) {
+      $('saveSettings').disabled = false; fillSettings(r); say($('setMsg'), 'ההגדרות נשמרו ✓. הן ישמשו מהסריקה הבאה.', true);
+    }).withFailureHandler(function (e) { $('saveSettings').disabled = false; say($('setMsg'), 'משהו השתבש: ' + (e && e.message || e)); }).appSaveSettings(collect());
+  });
+  $('reset').addEventListener('click', function () {
+    google.script.run.withSuccessHandler(function (r) { fillSettings(r); say($('setMsg'), 'חזרנו להגדרות ברירת המחדל ✓', true); }).appResetSettings();
+  });
+  $('saveKey2').addEventListener('click', function () {
+    $('saveKey2').disabled = true;
+    say($('keyMsg2'), 'בודק את המפתח…', true);
+    google.script.run.withSuccessHandler(function (r) {
+      $('saveKey2').disabled = false; say($('keyMsg2'), r.message, r.ok);
+      if (r.ok) { $('key2').value = ''; google.script.run.withSuccessHandler(fillSettings).appGetSettings(); }
+    }).withFailureHandler(function (e) { $('saveKey2').disabled = false; say($('keyMsg2'), 'משהו השתבש: ' + (e && e.message || e)); }).appSaveKey($('key2').value);
+  });
 
   refresh();
 </script>

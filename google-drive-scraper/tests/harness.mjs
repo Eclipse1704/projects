@@ -10,9 +10,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // FAST=1 runs everything in fast mode (direct Claude calls); otherwise batch jobs.
 export const FAST = process.env.FAST === "1";
 
-export function setSetting(sheet, name, value) {
-  for (let r = 2; r <= sheet.getLastRow(); r++) if (sheet.get(r, 1) === name) { sheet.set(r, 2, value); return; }
-  throw new Error("no setting " + name);
+// Changes one setting the way the app's settings screen does.
+export function setSetting(p, name, value) {
+  const values = p.run("appGetSettings").values;
+  if (!(name in values)) throw new Error("no setting " + name);
+  p.run("appSaveSettings", { ...values, [name]: value });
 }
 
 export function loadProject(fetchHandler, { apiKey = "sk-test", fast = FAST } = {}) {
@@ -21,20 +23,25 @@ export function loadProject(fetchHandler, { apiKey = "sk-test", fast = FAST } = 
   const code = readdirSync(ROOT).filter((f) => f.endsWith(".gs")).map((f) => readFileSync(path.join(ROOT, f), "utf8")).join("\n;\n");
   vm.runInContext(code, ctx);
   // Every trigger run / menu click is a fresh execution: module-level caches start empty.
-  const fresh = () => vm.runInContext("SETTINGS_MEMO = null; FOLDER_MEMO = {};", ctx);
+  const fresh = () => vm.runInContext("SETTINGS_MEMO = null; FOLDER_MEMO = {}; ITEMS_MEMO = null; ITEMS_DIRTY = false; BIG_SEEN = {};", ctx);
   const run = (fn, ...args) => { fresh(); return ctx[fn](...args); };
-  run("setup");
+  run("doGet");
   if (apiKey) g.scriptProps.setProperty("ANTHROPIC_API_KEY", apiKey);
   g.scriptProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
-  setSetting(g.sheets.get("הגדרות"), "מצב מהיר", fast ? "כן" : "לא");
-  const sheet = g.sheets.get("מוצרים");
-  return {
-    g, ctx, run, sheet,
-    addLinks(links) { const start = Math.max(2, sheet.getLastRow() + 1); links.forEach((l, i) => sheet.set(start + i, 1, l)); },
-    rows() { return sheet.getRange(2, 1, sheet.getLastRow() - 1, 7).getValues(); },
+  const p = {
+    g, ctx, run,
+    // Links pasted in the app, not started yet: "start" sends them (like pressing התחל).
+    pending: [],
+    addLinks(links) { p.pending.push(...links); },
+    start() { const t = p.pending.join("\n"); p.pending = []; return run("appStart", t); },
+    items() { return run("getItems"); },
+    // [link, status, name, manufacturer, folderUrl, notes, id] per product, oldest first.
+    rows() { return p.items().map((it) => [it.link, it.status, it.name, it.manufacturer, it.folderUrl, it.notes, it.id]); },
     active() { return JSON.parse(g.scriptProps.getProperty("ACTIVE") || "[]"); },
     runUntilIdle(max = 40) { let i = 0; for (; i < max && g.triggers.some((t) => t.getHandlerFunction() === "tick"); i++) run("tick"); return i; },
   };
+  setSetting(p, "מצב מהיר", fast ? "כן" : "לא");
+  return p;
 }
 
 // A tiny fake Claude Batches API. `answer(params, req)` returns {content, stop_reason} or {error}.

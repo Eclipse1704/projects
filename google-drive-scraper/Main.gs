@@ -1,6 +1,6 @@
-// Product scraper -> Google Drive.
-// Paste product links in the "מוצרים" sheet, choose "סורק מוצרים ▸ הרץ". A 1-minute trigger then moves
-// every product through these steps until its Drive folder is ready:
+// Product scraper -> Google Drive (a Google Apps Script web app).
+// Links pasted in the app (App.gs) are queued here; a 1-minute trigger then moves every product
+// through these steps until its Drive folder is ready:
 //   new -> research (Claude batch: manufacturer + official site) -> official (read official pages)
 //       -> write (Claude batch: Hebrew text + choose images/PDFs/videos) -> save (Drive folder) -> done
 
@@ -26,141 +26,39 @@ var STATUS = {
   stopped: 'נעצר',
 };
 
-// ---------------- Menu & setup ----------------
+// ---------------- Setup ----------------
 
-function onOpen() {
-  try { ensureOwnCopy(); setup(); } catch (e) {}   // first open after install / copy: create the sheets
-  SpreadsheetApp.getUi().createMenu('סורק מוצרים')
-    .addItem('▶ פתח את הסורק', 'openScraper')
-    .addSeparator()
-    .addItem('הרץ על הקישורים בגיליון', 'startRun')
-    .addItem('הגדרת מפתח API של Claude', 'setApiKey')
-    .addItem('מצב המערכת', 'showStatus')
-    .addSeparator()
-    .addItem('■ עצור', 'stopRun')
-    .addToUi();
-}
-
-// Copying the spreadsheet ("make a copy" link) also copies the script's saved properties.
+// Copying the script ("make a copy") also copies its saved properties.
 // A copy must not use the original's API key or work queue: start clean.
 function ensureOwnCopy() {
   var props = PropertiesService.getScriptProperties();
-  var id = SpreadsheetApp.getActive().getId();
-  var owner = props.getProperty('SHEET_ID');
+  var id = ScriptApp.getScriptId();
+  var owner = props.getProperty('SCRIPT_ID');
   if (owner === id) return;
   if (owner) props.deleteAllProperties();
-  props.setProperty('SHEET_ID', id);
+  props.setProperty('SCRIPT_ID', id);
 }
 
-var HELP = [
-  ['איך משתמשים'],
-  ['1. בתפריט למעלה: סורק מוצרים ← ▶ פתח את הסורק. נפתח חלון בצד (מהפעם השנייה הוא נפתח לבד).'],
-  ['2. בפעם הראשונה: Google מבקשת אישור - Continue ← בוחרים חשבון ← Advanced ← Go to … (unsafe) ← Allow.'],
-  ['   ואז מדביקים בחלון את מפתח ה-API של Claude (מ-console.anthropic.com).'],
-  ['3. מדביקים בחלון קישורים למוצרים ולוחצים "התחל". בחלון רואים את ההתקדמות של כל מוצר.'],
-  ['4. כשמוצר מוכן לוחצים "פתח תיקייה". אפשר גם לסגור הכל - העבודה ממשיכה ברקע ונשלח מייל בסיום.'],
-  [''],
-  ['בכל מוצר בתיקייה: דף HTML בעברית, מסמך לקריאה, תיקיית תמונות, ברושור ומדריך למשתמש (מאתר היצרן הרשמי).'],
-  ['מילה שיצאה לא טוב בעברית? מוסיפים אותה בגיליון "הגדרות" (מילון מונחים / מילים שלא משתמשים בהן).'],
-];
-
-function setup() {
-  var ss = SpreadsheetApp.getActive();
-  var products = ss.getSheetByName(SHEET_PRODUCTS) || ss.insertSheet(SHEET_PRODUCTS, 0);
-  if (products.getLastRow() === 0) {
-    products.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]).setFontWeight('bold');
-    products.setFrozenRows(1);
-    products.setRightToLeft(true);
-    products.setColumnWidth(COL.LINK, 360);
-    products.setColumnWidth(COL.STATUS, 220);
-    products.setColumnWidth(COL.NAME, 320);
-    products.setColumnWidth(COL.FOLDER, 200);
-    products.setColumnWidth(COL.NOTES, 360);
-    products.hideColumns(COL.ID);
-  }
-  var help = ss.getSheetByName(SHEET_HELP) || ss.insertSheet(SHEET_HELP);
-  if (help.getLastRow() === 0) {
-    help.getRange(1, 1, HELP.length, 1).setValues(HELP);
-    help.getRange(1, 1).setFontWeight('bold');
-    help.setRightToLeft(true);
-    help.setColumnWidth(1, 900);
-  }
-  var settings = ss.getSheetByName(SHEET_SETTINGS) || ss.insertSheet(SHEET_SETTINGS);
-  if (settings.getLastRow() === 0) {
-    settings.getRange(1, 1, 1, 3).setValues([['הגדרה', 'ערך', 'הסבר']]).setFontWeight('bold');
-    settings.getRange(2, 1, DEFAULT_SETTINGS.length, 3).setValues(DEFAULT_SETTINGS).setWrap(true).setVerticalAlignment('top');
-    settings.setRightToLeft(true);
-    settings.setColumnWidth(1, 160);
-    settings.setColumnWidth(2, 520);
-    settings.setColumnWidth(3, 320);
-  }
-}
-
-function setApiKey() {
-  ensureOwnCopy();
-  var ui = SpreadsheetApp.getUi();
-  var r = ui.prompt('מפתח API של Claude', 'הדביקו את המפתח מ-console.anthropic.com (נשמר בגיליון הזה בלבד, לא מוצג לאף אחד):', ui.ButtonSet.OK_CANCEL);
-  if (r.getSelectedButton() !== ui.Button.OK) return;
-  var key = r.getResponseText().trim();
-  if (key) {
-    PropertiesService.getScriptProperties().setProperty('ANTHROPIC_API_KEY', key);
-    SETTINGS_MEMO = null;
-    ui.alert('המפתח נשמר ✓');
-  }
-}
-
-function startRun() {
-  ensureOwnCopy();
-  setup();
-  if (!readSettings().apiKey) {
-    setApiKey();
-    SETTINGS_MEMO = null;
-    if (!readSettings().apiKey) return;
-  }
-  var added = queueSheetRows();
-  if (added === null) {
-    SpreadsheetApp.getUi().alert('הדביקו קישורים למוצרים בעמודה "קישור למוצר" (קישור בכל שורה) ואז הריצו שוב.');
-  } else if (!added) {
-    SpreadsheetApp.getUi().alert('אין קישורים חדשים להרצה. (שורות שכבר הושלמו לא רצות שוב; כדי להריץ שוב מוחקים את הסטטוס.)');
-  } else {
-    SpreadsheetApp.getActive().toast(added + ' מוצרים נכנסו לתור. העבודה מתחילה תוך דקה וממשיכה ברקע - אפשר לסגור את הגיליון.', 'סורק מוצרים', 10);
-  }
-}
-
-// Puts every sheet row with a link and no status (or 'stopped' / error) in the queue and starts the
-// background worker. Returns how many were added, or null when the sheet has no rows at all.
-function queueSheetRows() {
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
-  var n = sheet.getLastRow() - 1;
-  if (n < 1) return null;
+// Queues links and starts the background worker. Returns how many were added.
+function queueLinks(links) {
   var lock = LockService.getScriptLock();
   lock.waitLock(60000);   // the worker may be running right now
-  var added = 0;
   try {
-    var rows = sheet.getRange(2, 1, n, HEADERS.length).getValues();
+    var list = getItems();
     var stages = getStages();
     var stamp = Date.now().toString(36);
-    rows.forEach(function (r, i) {
-      var link = String(r[COL.LINK - 1]).trim();
-      var status = String(r[COL.STATUS - 1]).trim();
-      if (!/^https?:\/\//i.test(link) || (status && status !== STATUS.stopped && status.indexOf(STATUS.error) !== 0)) return;
-      var id = 'p' + stamp + 'r' + (i + 2);
-      r[COL.ID - 1] = id;
-      r[COL.STATUS - 1] = STATUS.queued;
-      r[COL.NOTES - 1] = '';
+    links.forEach(function (link, i) {
+      var id = 'p' + stamp + 'n' + i;
+      list.push({ id: id, link: link, status: STATUS.queued, name: '', manufacturer: '', folderUrl: '', notes: '', added: new Date().toISOString() });
       saveState({ id: id, link: link, stage: 'new', writeAttempts: 0, researchAttempts: 0, researchPauses: 0, stepTries: {}, warnings: [] }, stages);
-      added++;
-    });
-    // One write for the whole sheet (only the status, notes and id columns change).
-    [COL.STATUS, COL.NOTES, COL.ID].forEach(function (c) {
-      sheet.getRange(2, c, n, 1).setValues(rows.map(function (r) { return [r[c - 1]]; }));
     });
     setStages(stages);
+    flushItems();
   } finally {
     lock.releaseLock();
   }
-  if (added) setTriggerEvery(1);
-  return added;
+  if (links.length) setTriggerEvery(1);
+  return links.length;
 }
 
 function stopRun() {
@@ -173,6 +71,7 @@ function stopRun() {
       try { claudeRequest(settings, 'post', '/v1/messages/batches/' + b.id + '/cancel'); } catch (e) {}
     });
     Object.keys(getStages()).forEach(function (id) { setRowStatus(id, STATUS.stopped); });
+    flushItems();
     setStages({});
     setBatches([]);
     stateFolder(settings).setTrashed(true);
@@ -211,20 +110,27 @@ function setBatches(b) { setBig('BATCHES', JSON.stringify(b)); }
 
 // Script Properties hold at most 9KB per value: long values are split into numbered parts.
 var PART_CHARS = 2500;   // Hebrew/UTF-8 safe: 2500 chars <= 9KB
+// The parts this execution last read or wrote, so unchanged parts aren't written again
+// (Script Properties have a daily read/write quota). Every writer holds the script lock.
+var BIG_SEEN = {};
 function getBig(key) {
   var props = PropertiesService.getScriptProperties();
   var n = parseInt(props.getProperty(key + '_parts') || '0', 10);
-  var out = '';
-  for (var i = 0; i < n; i++) out += props.getProperty(key + '_' + i) || '';
-  return out;
+  var parts = [];
+  for (var i = 0; i < n; i++) parts.push(props.getProperty(key + '_' + i) || '');
+  BIG_SEEN[key] = parts;
+  return parts.join('');
 }
 function setBig(key, value) {
   var props = PropertiesService.getScriptProperties();
-  var old = parseInt(props.getProperty(key + '_parts') || '0', 10);
-  var n = Math.ceil(value.length / PART_CHARS);
-  for (var i = 0; i < n; i++) props.setProperty(key + '_' + i, value.slice(i * PART_CHARS, (i + 1) * PART_CHARS));
-  for (var j = n; j < old; j++) props.deleteProperty(key + '_' + j);
-  props.setProperty(key + '_parts', String(n));
+  var seen = BIG_SEEN[key];
+  var old = seen ? seen.length : parseInt(props.getProperty(key + '_parts') || '0', 10);
+  var parts = [];
+  for (var i = 0; i * PART_CHARS < value.length; i++) parts.push(value.slice(i * PART_CHARS, (i + 1) * PART_CHARS));
+  parts.forEach(function (part, i) { if (!seen || seen[i] !== part) props.setProperty(key + '_' + i, part); });
+  for (var j = parts.length; j < old; j++) props.deleteProperty(key + '_' + j);
+  if (!seen || seen.length !== parts.length) props.setProperty(key + '_parts', String(parts.length));
+  BIG_SEEN[key] = parts;
 }
 
 function loadState(id) {
@@ -245,31 +151,37 @@ function saveState(p, stages) {
   if (!stages) setStages(m);
 }
 
-function findRow(id) {
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
-  var n = sheet.getLastRow() - 1;
-  if (n < 1) return 0;
-  var ids = sheet.getRange(2, COL.ID, n, 1).getValues();
-  for (var i = 0; i < ids.length; i++) if (ids[i][0] === id) return i + 2;
-  return 0;
+// The list the app shows: one entry per link ever queued (newest last). Kept in memory during a run
+// and written once at the end (Script Properties have a daily write quota).
+var MAX_ITEMS = 200;
+var ITEMS_MEMO = null;
+var ITEMS_DIRTY = false;
+
+function getItems() {
+  if (!ITEMS_MEMO) ITEMS_MEMO = JSON.parse(getBig('ITEMS') || '[]');
+  return ITEMS_MEMO;
 }
 
-// Text from websites/Claude starting with = + - @ would become a formula.
-function asText(v) {
-  v = String(v === undefined || v === null ? '' : v);
-  return /^[=+\-@]/.test(v) ? "'" + v : v;
+function flushItems() {
+  if (!ITEMS_MEMO) return;
+  var list = ITEMS_MEMO;
+  if (list.length > MAX_ITEMS) {   // forget the oldest finished products
+    var active = getStages();
+    var extra = list.length - MAX_ITEMS;
+    list = list.filter(function (it) { if (extra > 0 && !active[it.id]) { extra--; return false; } return true; });
+    ITEMS_MEMO = list;
+  }
+  setBig('ITEMS', JSON.stringify(list));
+  ITEMS_DIRTY = false;
 }
 
 function setRowStatus(id, status, extra) {
-  var row = findRow(id);
-  if (!row) return;
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS);
-  sheet.getRange(row, COL.STATUS).setValue(status);
+  var it = getItems().filter(function (x) { return x.id === id; })[0];
+  if (!it) return;
+  it.status = status;
   extra = extra || {};
-  if (extra.name !== undefined) sheet.getRange(row, COL.NAME).setValue(asText(extra.name));
-  if (extra.manufacturer !== undefined) sheet.getRange(row, COL.MANUFACTURER).setValue(asText(extra.manufacturer));
-  if (extra.folderUrl) sheet.getRange(row, COL.FOLDER).setFormula('=HYPERLINK("' + extra.folderUrl + '","פתח תיקייה")');
-  if (extra.notes !== undefined) sheet.getRange(row, COL.NOTES).setValue(asText(extra.notes));
+  ['name', 'manufacturer', 'folderUrl', 'notes'].forEach(function (k) { if (extra[k] !== undefined) it[k] = String(extra[k]).slice(0, 600); });
+  ITEMS_DIRTY = true;
 }
 
 // ---------------- The worker (runs every minute until everything is done) ----------------
@@ -287,38 +199,29 @@ function tick() {
   } catch (e) {
     reportCrash(e);
   } finally {
-    lock.releaseLock();
+    try { if (ITEMS_DIRTY) flushItems(); } finally { lock.releaseLock(); }
   }
 }
 
-// A background run that crashes would otherwise fail silently: show it on the rows and in "מצב המערכת".
+// A background run that crashes would otherwise fail silently: show it on the products and in the app.
 function reportCrash(e) {
   var msg = String(e && e.message || e);
   PropertiesService.getScriptProperties().setProperty('LAST_ERROR', new Date().toISOString() + ' ' + msg);
   try {
-    Object.keys(getStages()).forEach(function (id) {
-      var row = findRow(id);
-      if (row) SpreadsheetApp.getActive().getSheetByName(SHEET_PRODUCTS).getRange(row, COL.NOTES).setValue(asText('תקלה בהרצה ברקע (מנסה שוב כל דקה): ' + msg));
-    });
+    Object.keys(getStages()).forEach(function (id) { setRowStatus(id, STATUS.queued, { notes: 'תקלה בהרצה ברקע (מנסה שוב כל דקה): ' + msg }); });
   } catch (e2) {}
 }
 
-// Menu: is the background worker running, when did it last run, what went wrong.
-function showStatus() {
+// For the app: is the background worker running, when did it last run, what went wrong.
+function workerStatus() {
   var props = PropertiesService.getScriptProperties();
-  var stages = getStages();
-  var count = {};
-  Object.keys(stages).forEach(function (id) { count[stages[id]] = (count[stages[id]] || 0) + 1; });
-  var trigger = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; });
-  var fmt = function (iso) { return iso ? Utilities.formatDate(new Date(iso), Session.getScriptTimeZone(), 'dd/MM HH:mm:ss') : 'אף פעם'; };
   var lastError = props.getProperty('LAST_ERROR') || '';
-  SpreadsheetApp.getUi().alert('מצב המערכת',
-    'עבודה ברקע: ' + (trigger ? 'פעילה ✓' : 'לא פעילה') + '\n' +
-    'הרצה אחרונה: ' + fmt(props.getProperty('LAST_RUN')) + '\n' +
-    'מוצרים בעבודה: ' + (Object.keys(stages).length ? JSON.stringify(count) : 'אין') + '\n' +
-    'מפתח API: ' + (readSettings().apiKey ? 'מוגדר ✓' : 'חסר') + '\n' +
-    'תקלה אחרונה: ' + (lastError ? fmt(lastError.split(' ')[0]) + ' - ' + lastError.slice(lastError.indexOf(' ') + 1) : 'אין'),
-    SpreadsheetApp.getUi().ButtonSet.OK);
+  return {
+    running: ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'tick'; }),
+    lastRun: props.getProperty('LAST_RUN') || '',
+    lastError: lastError ? lastError.slice(lastError.indexOf(' ') + 1) : '',
+    lastErrorAt: lastError ? lastError.split(' ')[0] : '',
+  };
 }
 
 // Everything one background run does.
@@ -329,11 +232,15 @@ function work() {
     recoverLostWaits();
     // Take every product as far as it can go in this run - all products together, stage after stage.
     for (var round = 0; round < 10 && timeLeft() > 45000; round++) {
+      // After each stage the list is saved, so the app shows progress while this run goes on.
       var moved = runLocalStage(settings, 'new');
       if (settings.fast) moved = runClaudeNow(settings, 'research') || moved;
+      if (ITEMS_DIRTY) flushItems();
       moved = runLocalStage(settings, 'official') || moved;
       if (settings.fast) moved = runClaudeNow(settings, 'write') || moved;
+      if (ITEMS_DIRTY) flushItems();
       moved = runLocalStage(settings, 'save') || moved;
+      if (ITEMS_DIRTY) flushItems();
       if (!moved) break;
     }
     submitBatches(settings, 'research');
@@ -889,10 +796,11 @@ function finishIfDone(settings) {
   stateFolder(settings).setTrashed(true);
   FOLDER_MEMO.state = null;
   if (!had.length || !settings.email) return;
-  var ss = SpreadsheetApp.getActive();
   try {
+    var appUrl = '';
+    try { appUrl = ScriptApp.getService().getUrl() || ''; } catch (e) {}
     MailApp.sendEmail(Session.getEffectiveUser().getEmail(), 'סורק מוצרים: הסריקה הסתיימה',
-      'כל המוצרים עובדו. הסטטוסים והקישורים לתיקיות בגיליון:\n' + ss.getUrl() + '\n\nהתיקייה בדרייב: ' + rootFolder(settings).getUrl());
+      'כל המוצרים עובדו.' + (appUrl ? '\nבאפליקציה: ' + appUrl : '') + '\n\nהתיקייה בדרייב: ' + rootFolder(settings).getUrl());
   } catch (e) {
     console.warn('email not sent: ' + e.message);
   }

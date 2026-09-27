@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 {
   echo "// סורק מוצרים ל-Google Drive - כל הקוד בקובץ אחד."
   echo "// מדביקים את כל הקובץ הזה ב-Code.gs בעורך של Apps Script. הוראות: README.md"
-  for f in Settings.gs Extract.gs Claude.gs Output.gs Main.gs Sidebar.gs; do
+  for f in Settings.gs Extract.gs Claude.gs Output.gs Main.gs App.gs; do
     echo ""
     echo "// ======================================== $f ========================================"
     cat "$f"

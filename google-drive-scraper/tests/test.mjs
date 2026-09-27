@@ -142,26 +142,26 @@ const ctx = vm.createContext({ ...g.google, JSON, Date, Math, String, Array, Obj
 const code = readdirSync(ROOT).filter((f) => f.endsWith(".gs")).map((f) => readFileSync(path.join(ROOT, f), "utf8")).join("\n;\n");
 vm.runInContext(code, ctx);
 
-ctx.setup();
+ctx.doGet();
 // FAST=1: direct calls (the default setting); otherwise batch jobs.
 const FAST = process.env.FAST === "1";
-{ const st = g.sheets.get("הגדרות"); for (let r = 2; r <= st.getLastRow(); r++) if (st.get(r, 1) === "מצב מהיר") st.set(r, 2, FAST ? "כן" : "לא"); }
-ctx.onOpen();
-g.userProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
+g.scriptProps.setProperty("ANTHROPIC_API_KEY", "sk-test");
 g.scriptProps.setProperty("ANTHROPIC_API_BASE", "https://api.test");
-const products = g.sheets.get("מוצרים");
-["https://supplier.test/product/x2000", "https://thermo.test/products/thermal-226s", "https://supplier.test/product/broken"]
-  .forEach((link, i) => products.set(i + 2, 1, link));
-
-ctx.startRun();
-for (let i = 0; i < 40 && g.triggers.some((t) => t.getHandlerFunction() === "tick"); i++) ctx.tick();
+ctx.appSaveSettings({ ...ctx.appGetSettings().values, "מצב מהיר": FAST ? "כן" : "לא" });
+const reset = () => vm.runInContext("SETTINGS_MEMO = null; FOLDER_MEMO = {}; ITEMS_MEMO = null; ITEMS_DIRTY = false; BIG_SEEN = {};", ctx);
+reset();
+const started = ctx.appStart(["https://supplier.test/product/x2000", "https://thermo.test/products/thermal-226s", "https://supplier.test/product/broken"].join("\n"));
+assert.equal(started.ok, true, started.message);
+for (let i = 0; i < 40 && g.triggers.some((t) => t.getHandlerFunction() === "tick"); i++) { reset(); ctx.tick(); }
+reset();
 
 // ---- checks ----
-const rows = products.getRange(2, 1, 3, 7).getValues();
+const rows = ctx.getItems().map((it) => [it.link, it.status, it.name, it.manufacturer, it.folderUrl, it.notes, it.id]);
+assert.equal(rows.length, 3);
 const statusOf = rows.map((r) => r[1]);
 assert.ok(statusOf.every((s) => s.startsWith("✓")), "all done: " + JSON.stringify(rows.map((r) => [r[1], r[5]])));
 assert.deepEqual(rows.map((r) => r[3]), ["Mitcorp", "Thermo", "Mitcorp"]);
-assert.ok(rows.every((r) => String(r[4]).startsWith('=HYPERLINK("https://drive.google.com/drive/folders/')));
+assert.ok(rows.every((r) => String(r[4]).startsWith("https://drive.google.com/drive/folders/")));
 
 const root = g.myDrive.getFoldersByName("NDT24 - מוצרים").next();
 const live = (f) => f.folders.filter((x) => !x.trashed);

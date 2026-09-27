@@ -1,12 +1,4 @@
-// Default settings. They are written to the "הגדרות" sheet on first setup and can be edited there.
-
-var SHEET_PRODUCTS = 'מוצרים';
-var SHEET_SETTINGS = 'הגדרות';
-var SHEET_HELP = 'הוראות';
-
-// Products sheet columns (1-based).
-var COL = { LINK: 1, STATUS: 2, NAME: 3, MANUFACTURER: 4, FOLDER: 5, NOTES: 6, ID: 7 };
-var HEADERS = ['קישור למוצר', 'סטטוס', 'שם המוצר', 'יצרן', 'תיקייה בדרייב', 'הערות', 'מזהה'];
+// Default settings. They can be changed in the app's settings screen (saved in Script Properties).
 
 var SHORT_MAX_WORDS = 80;
 var FULL_MAX_WORDS = 500;
@@ -48,14 +40,7 @@ var SETTINGS_MEMO = null; // read once per run
 
 function readSettings() {
   if (SETTINGS_MEMO) return SETTINGS_MEMO;
-  var sheet = SpreadsheetApp.getActive().getSheetByName(SHEET_SETTINGS);
-  var map = {};
-  DEFAULT_SETTINGS.forEach(function (row) { map[row[0]] = row[1]; });
-  if (sheet && sheet.getLastRow() > 1) {
-    sheet.getRange(2, 1, sheet.getLastRow() - 1, 2).getValues().forEach(function (r) {
-      if (r[0] && String(r[1]).trim() !== '') map[String(r[0]).trim()] = String(r[1]).trim();
-    });
-  }
+  var map = settingsMap();
   SETTINGS_MEMO = {
     rootFolder: map['תיקייה בדרייב'],
     model: map['מודל'],
@@ -64,9 +49,34 @@ function readSettings() {
     styleUrls: map['דפי דוגמה לסגנון'].split(/\s+/).filter(function (u) { return /^https?:\/\//.test(u); }),
     glossary: map['מילון מונחים'],
     avoidWords: String(map['מילים שלא משתמשים בהן'] || '').split('\n').map(function (w) { return w.trim(); }).filter(String),
-    // Stored for the whole spreadsheet, so the worker runs the same no matter which editor pressed 'run'.
+    // Stored for the whole script, so the background worker uses the same key.
     apiKey: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY') || PropertiesService.getUserProperties().getProperty('ANTHROPIC_API_KEY') || '',
     apiBase: PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_BASE') || 'https://api.anthropic.com',
   };
   return SETTINGS_MEMO;
+}
+
+// Defaults with the user's changes on top: {label: value}.
+function settingsMap() {
+  var map = {};
+  DEFAULT_SETTINGS.forEach(function (row) { map[row[0]] = row[1]; });
+  var saved = {};
+  try { saved = JSON.parse(getBig('SETTINGS') || '{}'); } catch (e) {}
+  Object.keys(saved).forEach(function (k) {
+    if (map.hasOwnProperty(k) && String(saved[k]).trim() !== '') map[k] = String(saved[k]).trim();
+  });
+  return map;
+}
+
+// Saves only values that differ from the defaults, so improved defaults still reach old installs.
+function saveSettings(values) {
+  var out = {};
+  DEFAULT_SETTINGS.forEach(function (row) {
+    var v = values[row[0]];
+    if (v === undefined || v === null) return;
+    v = String(v).replace(/\r/g, '').trim();
+    if (v !== '' && v !== String(row[1]).trim()) out[row[0]] = v;
+  });
+  setBig('SETTINGS', JSON.stringify(out));
+  SETTINGS_MEMO = null;
 }
