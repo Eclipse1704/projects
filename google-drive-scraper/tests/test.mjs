@@ -209,4 +209,11 @@ assert.equal(g.triggers.length, 0, "trigger removed");
 assert.equal(g.mails.length, 1, "done email");
 // research(3) -> continuation(X2000) ; write(2 ready) -> write(X2000, ready one step later) -> retry(X2000)
 assert.equal(batches.size, 5);
+// install/Code.gs (what users paste) must match the source files
+{
+  const { execFileSync } = await import("node:child_process");
+  const before = readFileSync(path.join(ROOT, "install", "Code.gs"), "utf8");
+  execFileSync(path.join(ROOT, "build.sh"));
+  assert.equal(readFileSync(path.join(ROOT, "install", "Code.gs"), "utf8"), before, "install/Code.gs is out of date: run ./build.sh");
+}
 console.log("✓ all checks passed");
