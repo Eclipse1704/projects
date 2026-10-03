@@ -1,0 +1,6 @@
+# Genjutsu skill results, job plans and downloaded videos
+outputs/
+
+# Never commit credentials
+.env
+.env.*
