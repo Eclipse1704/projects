@@ -4,3 +4,6 @@ outputs/
 # Never commit credentials
 .env
 .env.*
+
+# Python bytecode
+__pycache__/
