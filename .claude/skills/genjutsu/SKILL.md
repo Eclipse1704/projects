@@ -1,6 +1,6 @@
 ---
 name: genjutsu
-description: Run Higgsfield Genjutsu video-to-video generation through the pay-per-second Higgsfield API (not subscription credits). Two modes - motion transfer (recast a video - new character, outfit, location or style from reference images while keeping the original motion, camera and timing) and object swap (replace specific elements, keep the rest of the shot). Use whenever the user asks for Genjutsu, Higgsfield motion transfer, object swap, recasting / re-skinning / character-swapping a video, or putting someone or something from a reference image into an existing clip. Every submission costs real money, so it always shows duration, resolution and estimated cost and waits for the user's confirmation.
+description: Run Higgsfield Genjutsu video-to-video generation through the pay-per-second Higgsfield API (not subscription credits). Three modes - motion transfer (recast a video - new character, outfit, location or style from reference images while keeping the original motion, camera and timing), object swap (replace specific elements, keep the rest of the shot) and restyle (turn a video into a preset visual style such as anime or claymation, keeping motion and audio). Use whenever the user asks for Genjutsu, Higgsfield motion transfer, object swap, restyle, recasting / re-skinning / character-swapping a video, putting someone or something from a reference image into an existing clip, or converting a video into an art style. Every submission costs real money, so it always shows duration, resolution and estimated cost and waits for the user's confirmation.
 ---
 
 # Genjutsu (Higgsfield API, pay per second)
@@ -30,16 +30,33 @@ Prices and defaults: `${CLAUDE_SKILL_DIR}/config.json`. Standard-library Python 
 1. **Collect inputs**
    - Source video: local `.mp4`/`.m4v` or a public URL. Min 4 s. Longer than 30 s is trimmed to the first
      30 s (billed as 30 s). A local `.mov` must be converted to MP4 first; the script prints the ffmpeg command.
-   - 1-8 reference images, in order: local jpg/png/webp/gif or public URLs.
+   - Reference images, in order: local jpg/png/webp/gif or public URLs. 1-8 for motion transfer and
+     object swap; optional 0-5 character images for restyle.
    - Optional prompt (max 10,000 chars). Use `--prompt-file` for long or quote-heavy prompts.
-   - Mode: `motion-transfer` (default; recast the whole shot) or `object-swap` (swap specific
-     elements, keep everything else; needs at least 409,600 px per frame, e.g. 854x480 or larger).
+   - Mode:
+     - `motion-transfer` (default): recast the whole shot from the reference images.
+     - `object-swap`: swap specific elements, keep everything else. Needs at least 409,600 px per
+       frame (e.g. 854x480 or larger).
+     - `restyle`: apply one style preset (`--preset`, required). Keeps motion, composition and source
+       audio. Without images it restyles the people already in the video; with images (max 5) it uses
+       them as character references. Source max 200 MiB, each image max 64 MiB. Output duration/FPS
+       can differ slightly from the source.
    - Resolution: default **1080p** (highest) unless the user says otherwise. Options 1080p / 720p / 480p.
+
+   For restyle, list the styles first (free) and let the user pick one by name:
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/genjutsu.py" presets [search-text]
+   ```
+   `--preset` accepts the UUID or a name. A name must match exactly one style (exact match first,
+   then substring); the summary shows the resolved name and UUID so the user confirms the right style.
 
 2. **Plan + cost check (free)**, run from the user's project directory so results land in `./outputs`:
    ```bash
    python3 "${CLAUDE_SKILL_DIR}/genjutsu.py" run --video clip.mp4 --image ref1.png ref2.jpg \
      --prompt "optional instructions" [--mode object-swap] [--resolution 720p] [--max-cost 25]
+
+   python3 "${CLAUDE_SKILL_DIR}/genjutsu.py" run --mode restyle --video clip.mp4 \
+     --preset "Cel-Shaded CG Anime" [--image character.png] [--prompt "keep her pink hair"]
    ```
    Use `--dry-run` to get an estimate without credentials, uploads or any API call.
    Relay the `=== Genjutsu ... cost check ===` block to the user (duration, billed seconds,
@@ -59,13 +76,15 @@ Other commands (never create a paid request):
 - `resume <plan|request_id>`: keep polling and download.
 - `status <plan|request_id>`: one status check.
 - `cancel <plan|request_id>`: cancel while still `queued` (refunded). Not possible once `in_progress`.
+- `presets [search]`: list restyle styles (id, name, preview image).
 
 Exit codes: 0 ok, 1 error / failed job, 2 submit outcome unknown, 3 polling stopped (job still
 running, use `resume`), 130 interrupted.
 
 ## Pricing
 
-List prices (`config.json`, USD per source second, before discounts, same for both modes):
+List prices (`config.json`, USD per source second, before discounts, same for all three modes;
+the restyle docs call them approximate):
 480p $0.318, 720p $0.681, 1080p $1.632. Duration is trimmed to 30 s, then rounded **up** to whole
 seconds. The script also asks Higgsfield's free estimate endpoint for an account-specific quote and
 uses the higher of the two for `--max-cost` / `max_cost_usd` checks. If a price is missing, the
@@ -76,12 +95,16 @@ Failed, nsfw and canceled requests are not charged.
 
 - Motion transfer: `POST https://api.higgsfield.ai/higgsfield/genjutsu/motion-transfer/v1.0`
 - Object swap: `POST https://api.higgsfield.ai/higgsfield/genjutsu/object-swap/v1.0`
-- Body (both): `video_url` (required), `image_urls` (required, 1-8), `prompt` (default ""),
-  `resolution` (`480p` | `720p` | `1080p`, API default 720p). No other fields (`additionalProperties: false`).
+- Restyle: `POST https://api.higgsfield.ai/higgsfield/genjutsu/restyle/v1.0`
+- Body (motion transfer, object swap): `video_url` (required), `image_urls` (required, 1-8),
+  `prompt` (default ""), `resolution` (`480p` | `720p` | `1080p`, API default 720p).
+- Body (restyle): `video_url` (required), `preset_id` (required UUID), `image_urls` (optional, 0-5,
+  default []), `prompt`, `resolution`. `null` is not accepted.
+- No other fields on any mode (`additionalProperties: false`).
+- Restyle styles: `GET https://api.higgsfield.ai/models/higgsfield/genjutsu/restyle/v1.0/presets`
+  returns `{"items": [{"id", "name", "preview_url"}]}`; send `items[].id` as `preset_id`.
 - Auth: `Authorization: Key $HF_API_KEY_ID:$HF_API_KEY_SECRET`. Idempotency via `Idempotency-Key` header.
 - Uploads: `POST /files/generate-upload-url {"content_type"}` returns `upload_url` + `upload_headers` + `public_url`;
   PUT the file with exactly those headers (no credentials); video must be `video/mp4`.
 - Lifecycle: `queued`, `in_progress`, then `completed` / `failed` / `nsfw` / `canceled`; output at `video.url`.
 - Optional completion webhook: `?hf_webhook=<https url>` on submit (`--webhook`).
-- A third Genjutsu workflow, Restyle (`/higgsfield/genjutsu/restyle/v1.0`, needs a `preset_id`),
-  exists but is not wired into this script.

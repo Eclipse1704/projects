@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Higgsfield Genjutsu (motion transfer / object swap) through the pay-per-second API.
+"""Run Higgsfield Genjutsu (motion transfer / object swap / restyle) through the pay-per-second API.
 
 Commands
   run      Check inputs, read the video duration, upload local files, get a cost estimate
@@ -10,10 +10,12 @@ Commands
            Never submits anything.
   status   Print the current status of a request once.
   cancel   Cancel a request that is still queued (canceled requests are refunded).
+  presets  List the style presets available for restyle (free).
 
 Docs this follows:
   https://docs.higgsfield.ai/docs/models/genjutsu/motion-transfer
   https://docs.higgsfield.ai/docs/models/genjutsu/object-swap
+  https://docs.higgsfield.ai/docs/models/genjutsu/restyle
   https://docs.higgsfield.ai/docs/concepts/file-uploads
   https://docs.higgsfield.ai/docs/concepts/requests
   https://docs.higgsfield.ai/docs/concepts/polling
@@ -56,14 +58,18 @@ USER_AGENT = "genjutsu-skill/1.0"
 MODELS = {
     "motion-transfer": "higgsfield/genjutsu/motion-transfer/v1.0",
     "object-swap": "higgsfield/genjutsu/object-swap/v1.0",
+    "restyle": "higgsfield/genjutsu/restyle/v1.0",
 }
+IMAGE_LIMITS = {"motion-transfer": (1, 8), "object-swap": (1, 8), "restyle": (0, 5)}
+PRESETS_URL = f"{API_BASE}/models/higgsfield/genjutsu/restyle/v1.0/presets"
 RESOLUTIONS = ("1080p", "720p", "480p")  # highest first
 MIN_SECONDS = 4.0
 MAX_SECONDS = 30.0  # longer sources are trimmed to their first 30 s
-MIN_IMAGES, MAX_IMAGES = 1, 8
 MAX_PROMPT_CHARS = 10_000
 MAX_URL_CHARS = 2083
 OBJECT_SWAP_MIN_PIXELS = 409_600  # width x height of each frame
+RESTYLE_MAX_VIDEO_BYTES = 209_715_200  # 200 MiB download limit, checked before trimming
+RESTYLE_MAX_IMAGE_BYTES = 67_108_864  # 64 MiB per character image
 VIDEO_CONTENT_TYPES = {".mp4": "video/mp4", ".m4v": "video/mp4"}
 IMAGE_CONTENT_TYPES = {
     ".jpg": "image/jpeg",
@@ -439,8 +445,15 @@ def print_summary(plan: dict, cfg: dict | None = None):
     if v["duration_s"] > MAX_SECONDS:
         lines.append("              longer than 30 s: Higgsfield only uses the first 30 s")
     lines.append(f"Billed        {billed} s  (rounded up to whole seconds)")
-    lines.append(f"References    {len(inp['images'])} image(s)")
-    lines += [f"              {i}. {media_label(m)}" for i, m in enumerate(inp["images"], 1)]
+    preset = plan.get("preset")
+    if preset:
+        name = preset.get("name") or "(name not checked)"
+        lines.append(f"Style preset  {name}  ({preset['id']})")
+    if inp["images"]:
+        lines.append(f"References    {len(inp['images'])} image(s)")
+        lines += [f"              {i}. {media_label(m)}" for i, m in enumerate(inp["images"], 1)]
+    else:
+        lines.append("References    none (restyles the subjects already in the video)")
     lines.append(f"Prompt        {prompt or '(none)'}")
     lines.append(f"Resolution    {res}")
     if plan.get("webhook"):
@@ -509,6 +522,49 @@ def server_estimate(auth: str, model_id: str, body: dict) -> dict:
     return {"usd": res.get("usd"), "credits": res.get("credits")}
 
 
+def fetch_presets(auth: str) -> list[dict]:
+    """The restyle style catalog: [{id, name, preview_url}, ...]."""
+    res = api_request("GET", PRESETS_URL, auth)
+    items = res.get("items") if isinstance(res, dict) else None
+    if not isinstance(items, list):
+        raise ValueError(f"unexpected presets response {json.dumps(res)[:200]}")
+    return [i for i in items if isinstance(i, dict) and i.get("id")]
+
+
+def resolve_preset(auth: str, wanted: str) -> dict:
+    """Turn a preset UUID or style name into {id, name}, checked against the live catalog."""
+    is_id = bool(UUID_RE.fullmatch(wanted))
+    try:
+        items = fetch_presets(auth)
+    except ApiError as e:
+        if e.status == 401:
+            die("Higgsfield rejected the credentials (401); check HF_API_KEY_ID and HF_API_KEY_SECRET")
+        items, err = None, f"HTTP {e.status}: {e.detail}"
+    except TRANSIENT_ERRORS as e:
+        items, err = None, str(e)
+    if items is None:
+        if is_id:
+            warn(f"could not load the style catalog ({err}); using preset {wanted} unchecked")
+            return {"id": wanted.lower(), "name": None}
+        die(f"could not load the style catalog to look up '{wanted}' ({err}). Pass the preset UUID.")
+    if is_id:
+        for item in items:
+            if item["id"].lower() == wanted.lower():
+                return {"id": item["id"], "name": item.get("name")}
+        die(f"preset {wanted} is not in the current style catalog (hidden or removed). "
+            f"List the available styles with: {script_cmd()} presets")
+    key = wanted.casefold()
+    matches = [i for i in items if (i.get("name") or "").casefold() == key]
+    if not matches:
+        matches = [i for i in items if key in (i.get("name") or "").casefold()]
+    if len(matches) == 1:
+        return {"id": matches[0]["id"], "name": matches[0].get("name")}
+    if not matches:
+        die(f"no style matches '{wanted}'. List them with: {script_cmd()} presets")
+    names = ", ".join(sorted(i.get("name") or i["id"] for i in matches))
+    die(f"'{wanted}' matches several styles ({names}); use the full name or the preset UUID")
+
+
 def cmd_run(args) -> int:
     cfg = load_config()
     mode = args.mode
@@ -522,13 +578,26 @@ def cmd_run(args) -> int:
         prompt = Path(args.prompt_file).expanduser().read_text().strip()
     if len(prompt) > MAX_PROMPT_CHARS:
         die(f"prompt is {len(prompt)} characters; the maximum is {MAX_PROMPT_CHARS}")
-    if not MIN_IMAGES <= len(args.image) <= MAX_IMAGES:
-        die(f"give {MIN_IMAGES}-{MAX_IMAGES} reference images (got {len(args.image)})")
+    image_args = args.image or []
+    lo, hi = IMAGE_LIMITS[mode]
+    if not lo <= len(image_args) <= hi:
+        die(f"{mode} takes {lo}-{hi} reference images (got {len(image_args)})")
+    if mode == "restyle" and not args.preset:
+        die(f"restyle needs --preset (a style name or UUID). List styles with: {script_cmd()} presets")
+    if mode != "restyle" and args.preset:
+        die("--preset only applies to --mode restyle")
     if args.webhook and (not args.webhook.startswith("https://") or len(args.webhook) > MAX_URL_CHARS):
         die("--webhook must be a public https:// URL")
 
     video = classify(args.video, VIDEO_CONTENT_TYPES, "source video")
-    images = [classify(i, IMAGE_CONTENT_TYPES, "reference image") for i in args.image]
+    images = [classify(i, IMAGE_CONTENT_TYPES, "reference image") for i in image_args]
+    if mode == "restyle":
+        limits = [(video, RESTYLE_MAX_VIDEO_BYTES, "source video")]
+        limits += [(m, RESTYLE_MAX_IMAGE_BYTES, "character image") for m in images]
+        for m, limit, label in limits:
+            if m["local"] and Path(m["source"]).stat().st_size > limit:
+                die(f"restyle accepts a {label} of at most {limit // 2**20} MiB; "
+                    f"{Path(m['source']).name} is {Path(m['source']).stat().st_size / 2**20:.1f} MiB")
 
     try:
         duration, width, height, method = probe_video(video["source"], video["local"])
@@ -575,6 +644,7 @@ def cmd_run(args) -> int:
         "webhook": args.webhook,
         "body": {},
         "idempotency_key": idempotency_key,
+        "preset": {"id": args.preset, "name": None} if mode == "restyle" else None,
         "inputs": {"video": video, "images": images},
         "video_info": {"duration_s": round(duration, 3), "width": width, "height": height,
                        "method": method},
@@ -593,11 +663,15 @@ def cmd_run(args) -> int:
             return f"<upload of {Path(m['source']).name}>" if (m["local"] and placeholder) else m["source"]
         body = {"video_url": ref(video), "image_urls": [ref(m) for m in images],
                 "resolution": resolution}
+        if plan["preset"]:
+            body["preset_id"] = plan["preset"]["id"]
         if prompt:
             body["prompt"] = prompt
         return body
 
     if args.dry_run:
+        if plan["preset"] and not UUID_RE.fullmatch(args.preset):
+            plan["preset"] = {"id": "<looked up at plan time>", "name": args.preset}
         plan["body"] = build_body(placeholder=True)
         print_summary(plan, cfg)
         print("\nRequest body that would be sent:")
@@ -606,6 +680,9 @@ def cmd_run(args) -> int:
         return 0
 
     auth = auth_header()
+    if plan["preset"]:
+        # Checked before uploading so a wrong style fails fast.
+        plan["preset"] = resolve_preset(auth, args.preset)
     for m in [video, *images]:
         if m["local"]:
             size_mb = Path(m["source"]).stat().st_size / 1e6
@@ -918,9 +995,30 @@ def cmd_cancel(args) -> int:
     return 0
 
 
+def cmd_presets(args) -> int:
+    try:
+        items = fetch_presets(auth_header())
+    except ApiError as e:
+        die(f"could not load the restyle style catalog: {e}")
+    except TRANSIENT_ERRORS as e:
+        die(f"could not load the restyle style catalog: {e}")
+    if args.search:
+        items = [i for i in items if args.search.casefold() in (i.get("name") or "").casefold()]
+    if not items:
+        print("No matching styles." if args.search else "The style catalog is empty.")
+        return 0
+    for item in items:
+        print(f"{item['id']}  {item.get('name') or '(unnamed)'}")
+        if item.get("preview_url"):
+            print(f"{'':38}preview: {item['preview_url']}")
+    print(f"\n{len(items)} style(s). Pass a name or id to: run --mode restyle --preset ...")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="Higgsfield Genjutsu via the pay-per-second API (motion transfer, object swap).",
+        description="Higgsfield Genjutsu via the pay-per-second API "
+                    "(motion transfer, object swap, restyle).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Flow: run (plan + cost check, no charge) -> confirm -> submit <plan> (paid) "
                "-> resume <plan> if polling stops.",
@@ -929,14 +1027,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="plan a job: probe, upload, estimate (no charge)")
     run.add_argument("--video", required=True, help="source video: local .mp4 or public URL (min 4 s)")
-    run.add_argument("--image", required=True, action="extend", nargs="+",
-                     help="reference image(s): local jpg/png/webp/gif or URLs, 1-8 total, in order")
+    run.add_argument("--image", action="extend", nargs="+",
+                     help="reference image(s): local jpg/png/webp/gif or URLs, in order; "
+                          "1-8 for motion-transfer/object-swap, optional 0-5 for restyle")
     prompt = run.add_mutually_exclusive_group()
     prompt.add_argument("--prompt", help="optional text instructions (max 10000 chars)")
     prompt.add_argument("--prompt-file", help="read the prompt from a text file")
     run.add_argument("--mode", choices=sorted(MODELS), default="motion-transfer",
-                     help="motion-transfer (recast the shot, default) or object-swap "
-                          "(swap elements, keep the rest)")
+                     help="motion-transfer (recast the shot, default), object-swap "
+                          "(swap elements, keep the rest) or restyle (apply a style preset)")
+    run.add_argument("--preset",
+                     help="restyle only: style preset UUID or name (see the presets command)")
     run.add_argument("--resolution", choices=RESOLUTIONS,
                      help="output tier; default from config.json (1080p)")
     run.add_argument("--webhook", help="optional https URL for Higgsfield's completion webhook")
@@ -968,6 +1069,10 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "resume":
             sp.add_argument("--timeout-min", type=float, default=90)
         sp.set_defaults(func=func)
+
+    presets = sub.add_parser("presets", help="list restyle style presets (free)")
+    presets.add_argument("search", nargs="?", help="only show styles whose name contains this")
+    presets.set_defaults(func=cmd_presets)
     return p
 
 

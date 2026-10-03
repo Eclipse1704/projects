@@ -1,7 +1,7 @@
 {
   "_notes": [
     "Prices are USD per second of source video, before any customer discount.",
-    "Source: https://dash.higgsfield.ai/models/higgsfield/genjutsu/motion-transfer/v1.0/llms.txt and .../object-swap/v1.0/llms.txt (Pricing section), checked 2026-10-03.",
+    "Sources: Pricing sections of https://dash.higgsfield.ai/models/higgsfield/genjutsu/{motion-transfer,object-swap,restyle}/v1.0/llms.txt and the restyle docs page, checked 2026-10-03. Restyle rates are documented as approximate.",
     "Billing: the source is trimmed to its first 30 s, then rounded up to whole seconds.",
     "If a price is missing or changes, update it here; the script refuses to estimate without one.",
     "max_cost_usd: set a number to refuse any job whose estimate is above it (null = no cap)."
@@ -11,6 +11,7 @@
   "max_cost_usd": null,
   "price_usd_per_second": {
     "motion-transfer": { "480p": 0.318, "720p": 0.681, "1080p": 1.632 },
-    "object-swap": { "480p": 0.318, "720p": 0.681, "1080p": 1.632 }
+    "object-swap": { "480p": 0.318, "720p": 0.681, "1080p": 1.632 },
+    "restyle": { "480p": 0.318, "720p": 0.681, "1080p": 1.632 }
   }
 }
