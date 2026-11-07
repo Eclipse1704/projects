@@ -3,7 +3,8 @@
 Rules baked in:
 - Backgrounds: white, grey (light), dgrey (mid grey), black, red. Subtle gradients.
 - On red: white only (no black text or elements). On dark: red only for logo, button, /// and swoosh.
-- Big logo (~36% width), "///" top right, diagonal swoosh at the bottom of every slide.
+- Big logo (~36% width), "///" top right, a thin diagonal swoosh at the bottom that widens slightly to the right.
+- Text-heavy slides grow their text (up to 1.3x) when there is room. Products on red/dark sit on a soft light spot.
 - No eyebrow labels, no boxes: icon rows, dividers, big product cut-outs.
 - Every call to action is a button. One primary button per final slide.
 
@@ -73,7 +74,7 @@ def icon(name, size=40, stroke=2.4):
 SLASHES = ('<svg class="slashes" width="84" height="40" viewBox="0 0 84 40" fill="currentColor">'
            '<path d="M14 40L28 0h12L26 40z"/><path d="M36 40L50 0h12L48 40z"/><path d="M58 40L72 0h12L70 40z"/></svg>')
 SWOOSH = ('<svg class="swoosh" width="1080" height="130" viewBox="0 0 1080 130" preserveAspectRatio="none" fill="currentColor">'
-          '<path d="M0 130 L1080 62 L1080 84 L330 130 Z"/><path class="thin" d="M0 112 L1080 44 L1080 48 L0 117 Z"/></svg>')
+          '<path d="M0 119 L1080 46 L1080 60 L0 122 Z"/></svg>')  # starts thin (3px), widens a little (14px) toward the right
 
 
 def font_faces(brand):
@@ -93,10 +94,10 @@ html,body{width:1080px;height:1350px;overflow:hidden;background:#000}
 body{font-family:var(--body);-webkit-font-smoothing:antialiased;text-rendering:geometricPrecision}
 .slide{position:absolute;inset:0;overflow:hidden;display:flex;flex-direction:column;padding:62px 72px 64px;color:var(--fg)}
 /* themes */
-.t-white{--fg:#1E1E1E;--fg2:#4D5255;--acc:var(--red);--line:rgba(0,0,0,.13);background:radial-gradient(120% 90% at 75% 20%,#FFFFFF 0%,#F2F2F0 60%,#E9E9E7 100%)}
-.t-grey{--fg:#1E1E1E;--fg2:#4D5255;--acc:var(--red);--line:rgba(0,0,0,.14);background:radial-gradient(120% 90% at 75% 20%,#F0F0EF 0%,#E1E2E0 60%,#D5D6D4 100%)}
-.t-dgrey{--fg:#fff;--fg2:rgba(255,255,255,.84);--acc:#fff;--line:rgba(255,255,255,.24);background:radial-gradient(120% 90% at 75% 20%,#63666A 0%,#4E5155 55%,#3E4144 100%)}
-.t-black{--fg:#fff;--fg2:rgba(255,255,255,.84);--acc:#fff;--line:rgba(255,255,255,.2);background:radial-gradient(120% 90% at 75% 20%,#323232 0%,#1C1C1C 55%,#111 100%)}
+.t-white{--fg:#1E1E1E;--fg2:#3D4144;--acc:var(--red);--line:rgba(0,0,0,.13);background:radial-gradient(120% 90% at 75% 20%,#FFFFFF 0%,#F2F2F0 60%,#E9E9E7 100%)}
+.t-grey{--fg:#1E1E1E;--fg2:#3D4144;--acc:var(--red);--line:rgba(0,0,0,.14);background:radial-gradient(120% 90% at 75% 20%,#F0F0EF 0%,#E1E2E0 60%,#D5D6D4 100%)}
+.t-dgrey{--fg:#fff;--fg2:rgba(255,255,255,.9);--acc:#fff;--line:rgba(255,255,255,.24);background:radial-gradient(120% 90% at 75% 20%,#63666A 0%,#4E5155 55%,#3E4144 100%)}
+.t-black{--fg:#fff;--fg2:rgba(255,255,255,.9);--acc:#fff;--line:rgba(255,255,255,.2);background:radial-gradient(120% 90% at 75% 20%,#323232 0%,#1C1C1C 55%,#111 100%)}
 .t-red{--fg:#fff;--fg2:#fff;--acc:#fff;--line:rgba(255,255,255,.45);background:radial-gradient(120% 90% at 75% 20%,#E2361F 0%,var(--red) 55%,#B81C0E 100%)}
 
 /* chrome: big logo, ///, swoosh */
@@ -128,6 +129,8 @@ mark{background:none;color:var(--acc)}
 .title{font-size:92px}
 .body{margin-top:30px;font-size:42px;line-height:1.3;font-weight:600;color:var(--fg2)}
 .has-side .main>*{max-width:600px}
+.body,.irow .s,.step p,.prod p,.note,.numt .l,.col li span,.stat-label,.cover-sub{text-wrap:pretty}
+.irow .t,.step h3,.prod h3{text-wrap:balance}
 
 /* side product image (bleeds off the right edge) */
 .side{position:absolute;z-index:2;right:-70px;bottom:200px;max-width:620px;max-height:640px;width:auto;height:auto;filter:drop-shadow(0 26px 30px rgba(0,0,0,.3))}
@@ -212,7 +215,14 @@ mark{background:none;color:var(--acc)}
 .proofs{margin-top:auto;display:flex;gap:40px;padding-top:30px}
 .proof{display:flex;flex-direction:column;gap:12px;font-family:var(--head);font-weight:var(--head-w);font-size:36px;line-height:1.08}
 .proof .ic{width:58px;height:58px;color:var(--acc)}
-.k-cta .side{bottom:300px;max-width:470px;max-height:430px}
+.k-cta .side{bottom:280px;right:-40px;max-width:540px;max-height:480px}
+.spot{position:absolute;z-index:1;border-radius:50%;pointer-events:none}
+.t-red .spot{background:radial-gradient(closest-side,rgba(255,255,255,.72),rgba(255,255,255,.34) 50%,rgba(255,255,255,0))}
+.t-black .spot,.t-dgrey .spot{background:radial-gradient(closest-side,rgba(255,255,255,.26),rgba(255,255,255,.1) 50%,rgba(255,255,255,0))}
+.k-cover .spot{right:-130px;bottom:50px;width:860px;height:800px}
+.has-side .spot{right:-170px;bottom:120px;width:800px;height:760px}
+.k-cta .spot{bottom:150px;height:740px}
+.t-red .side,.t-red .hero{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.95)) drop-shadow(0 0 14px rgba(255,255,255,.45)) drop-shadow(0 24px 28px rgba(0,0,0,.3))}
 .k-cta.has-side .main>.cta-title,.k-cta.has-side .main>.lines{max-width:960px}
 .k-cta.has-side .main>.cta-btn{max-width:none}
 .cta-btn,.ln{white-space:nowrap}
@@ -238,9 +248,66 @@ FIT_JS = """
     }
     if (!changed) break;
   }
+  // text must stay clear of the product cut-out: shrink the product (it stays anchored bottom right)
+  const side = document.querySelector('.side');
+  if (side) {
+    const txt = [...main.querySelectorAll('h2,h3,p,.t,.s,.body,.ln,.cta-btn,.proof,li span')];
+    const hit = () => { const r = side.getBoundingClientRect(), gap = 18;  // the product PNGs are cropped tight
+      return txt.some(e => { const g = document.createRange(); g.selectNodeContents(e); const t = g.getBoundingClientRect();  // the text itself, not its full-width box
+        return t.right > r.left - gap && t.left < r.right && t.bottom > r.top - gap && t.top < r.bottom; }); };
+    let g = 0;
+    while (hit() && g++ < 8) { const r = side.getBoundingClientRect(); side.style.maxWidth = (r.width * 0.92) + 'px'; side.style.maxHeight = (r.height * 0.92) + 'px'; }
+  }
   return { overflow: over() };
 }
 """
+
+GROW_JS = """
+() => {
+  const main = document.querySelector('.main');
+  const kids = [...main.children];
+  if (!kids.length) return 1;
+  const els = [...main.querySelectorAll('.body,.irow .t,.irow .s,.step h3,.step p,.note,.numt .l,.col h3,.col li span,.prod h3,.prod p')];
+  const icons = [...main.querySelectorAll('.irow>.ic')];
+  const base = els.map(e => parseFloat(getComputedStyle(e).fontSize));
+  const ibase = icons.map(e => e.getBoundingClientRect().width);
+  const used = () => kids[kids.length - 1].getBoundingClientRect().bottom - kids[0].getBoundingClientRect().top;
+  const avail = main.clientHeight - 46;
+  const lines = e => { const lh = parseFloat(getComputedStyle(e).lineHeight); return lh ? Math.round(e.getBoundingClientRect().height / lh) : 0; };
+  const heads = [...main.querySelectorAll('.irow .t,.step h3,.prod h3,.col h3,.numt .l')];  // headings must not wrap onto more lines
+  const hlines = heads.map(lines);
+  const side = document.querySelector('.side');
+  const hits = () => {  // text must not run into the product cut-out
+    if (!side) return false;
+    const r = side.getBoundingClientRect(), gap = 18;
+    return els.some(e => { const g = document.createRange(); g.selectNodeContents(e); const t = g.getBoundingClientRect();  // the text itself, not its full-width box
+      return t.right > r.left - gap && t.left < r.right && t.bottom > r.top - gap && t.top < r.bottom; });
+  };
+  const bad = () => main.scrollHeight > main.clientHeight + 1 || used() > avail * 0.86 ||
+    heads.some((e, i) => lines(e) > hlines[i]) || hits() ||
+    [...main.querySelectorAll('[data-fit]')].some(e => e.scrollWidth > e.clientWidth + 1);
+  const apply = k => {
+    els.forEach((e, i) => e.style.fontSize = (base[i] * k) + 'px');
+    icons.forEach((e, i) => { const w = ibase[i] * Math.min(k, 1.15) + 'px'; e.style.width = w; e.style.height = w; });
+  };
+  let best = 1;
+  for (let k = 1.03; k <= 1.3001; k += 0.03) { apply(k); if (bad()) break; best = k; }
+  apply(best);
+  // then let the title grow a little with it, as long as it keeps its line count
+  const t = main.querySelector('.title');
+  if (t && best > 1) {
+    const t0 = parseFloat(getComputedStyle(t).fontSize), l0 = lines(t);
+    let tb = 1;
+    for (let k = 1.03; k <= Math.min(best, 1.2) + 0.001; k += 0.03) {
+      t.style.fontSize = (t0 * k) + 'px';
+      if (bad() || lines(t) > l0) break; tb = k;
+    }
+    t.style.fontSize = (t0 * tb) + 'px';
+  }
+  return best;
+}
+"""
+GROW_KINDS = {"statement", "icons", "features", "trust", "checklist", "steps", "compare", "numbers", "products"}
 
 
 def title(s, cls="title", fit=66):
@@ -370,6 +437,9 @@ def slide_html(spec, s, i, n, brand):
     if s.get("side"):
         extra += f'<img class="side" src="{data_uri(s["side"])}">'
         cls = " has-side"
+    cut_out = s.get("side") or (kind == "cover" and s.get("image") and s.get("image_style") != "wide")
+    if cut_out and theme in ("red", "black", "dgrey"):
+        extra = '<div class="spot"></div>' + extra  # keeps red/black products readable on red/dark slides
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>{font_faces(brand)}{root}{CSS}</style></head>
 <body><div class="slide k-{kind} t-{theme}{cls}">{extra}{SWOOSH}
 <div class="top">{logo_html(brand, theme, kind)}{SLASHES}</div>
@@ -419,6 +489,8 @@ def render(spec_path, brand, out_root):
             page.evaluate("document.fonts.ready.then(() => true)")
             if page.evaluate(FIT_JS).get("overflow"):
                 print(f"  ! slide {i} still overflows; shorten it")
+            elif s.get("type", "statement") in GROW_KINDS and s.get("grow", True):
+                page.evaluate(GROW_JS)  # text-heavy slide with room to spare: larger, easier-to-read text
             pth = out / f"{i:02d}.png"
             page.screenshot(path=str(pth))
             paths.append(pth)
