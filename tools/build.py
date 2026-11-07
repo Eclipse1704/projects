@@ -19,6 +19,21 @@ CHANGE_NOTE = ('<callout icon="✍️" color="yellow_bg">\n<b>Want a change?</b>
                'When the post is right, set the status to <b>Approved</b>.\n</callout>')
 
 
+def make_zip(pngs, zip_path, folder):
+    """Zip the slides as high-quality JPEGs: Notion's free plan takes files up to 5 MiB, and PNG slides add up to more."""
+    from io import BytesIO
+    from PIL import Image
+    for q in (95, 92, 88, 84):
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as z:
+            for p in pngs:
+                buf = BytesIO()
+                Image.open(p).convert("RGB").save(buf, "JPEG", quality=q, subsampling=0, optimize=True)
+                z.writestr(f"{folder}/{p.stem}.jpg", buf.getvalue())
+        if zip_path.stat().st_size < 4.7 * 1024 * 1024:
+            return
+    raise SystemExit("zip is still over 4.7 MiB")
+
+
 def stage(spec_path):
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     out = pro.render(spec_path, pro.load_brand(), ROOT / "out_pro")
@@ -30,9 +45,7 @@ def stage(spec_path):
     pngs = sorted(out.glob("[0-9][0-9].png"))
     zip_name = spec.get("notion", {}).get("zip_name") or f"{sid}.zip"
     folder = Path(zip_name).stem
-    with zipfile.ZipFile(dest / zip_name, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in pngs:
-            z.write(p, f"{folder}/{p.name}")
+    make_zip(pngs, dest / zip_name, folder)
     files = []
     for p in pngs:
         shutil.copy(p, dest / p.name)
