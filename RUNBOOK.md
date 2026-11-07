@@ -52,6 +52,8 @@ If `playwright` is missing and can't be installed, stop: write in `Change log` t
       `git add -A specs upload pro.py brand_pro.json facts.md && git commit -m "<Spec ID>: <short summary>" && git push origin jacobs-ig-engine`.
       Include the commit attribution lines given in the session.
    7. Read `upload/<Spec ID>/<stamp>/manifest.json`. For every file in it, call Notion `create-attachment` with `source_url` = its `url` and `filename` = its `filename`.
+      - In each `url`, replace `/jacobs-ig-engine/` with `/<full commit hash>/` (from `git rev-parse HEAD`), so Notion never gets a stale cached copy.
+      - Notion's limit on this workspace is 5 MiB per file. The zip holds JPEGs to stay under it.
       - Also create one extra attachment of slide `01` (filename `<Spec ID>-cover.png`) for the Cover.
       - Keep to about 8 calls a minute, and place the uploads within the hour.
       - Save the returned upload IDs as `ids.json`, e.g. `{"zip": "<id>", "01": "<id>", ...}`.
