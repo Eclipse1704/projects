@@ -15,7 +15,7 @@ sys.path.insert(0, str(ROOT))
 import pro  # noqa: E402
 
 CHANGE_NOTE = ('<callout icon="✍️" color="yellow_bg">\n<b>Want a change?</b> Write it in <b>Requested changes</b> at the top of this page '
-               '(text or design, any language). Claude checks every 2 hours between 08:00 and 22:00 Israel time, updates the slides and the caption '
+               '(text or design, any language). Claude checks for requests every hour between 08:00 and 22:00 Israel time, updates the slides and the caption '
                'on this page, writes what it changed in <b>Change log</b> and sets the status to <b>Updated – please review</b>. '
                'When the post is right, set the status to <b>Approved</b>.\n</callout>')
 
