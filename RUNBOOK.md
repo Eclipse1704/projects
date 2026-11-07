@@ -82,7 +82,6 @@ If `playwright` is missing and can't be installed, stop: write in `Change log` t
 - The bottom swoosh is one thin diagonal line: it starts thin at the bottom left and widens slightly toward the right (the owner's reference). Keep it that way.
 - Text-heavy slides grow their text automatically, up to 1.3x, when there is room. Headings never wrap onto more lines, and text never runs into a product image.
 - Product cut-outs on red, black or dark grey slides sit on a soft light spot with a thin light rim, so they stay visible. Don't remove it.
-- `///` sits at the top right. A diagonal swoosh runs along the bottom.
 - Backgrounds:
   - `red`: white only on top of it (no black text or elements).
   - `black` and `dgrey`: red only for the logo, the buttons, `///` and the swoosh.
