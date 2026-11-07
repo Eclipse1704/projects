@@ -2,10 +2,11 @@
 
   python3 tools/build.py stage specs/<id>.json      render, zip, copy to upload/<id>/<stamp>/, print a manifest
   python3 tools/build.py page specs/<id>.json ids.json   print the Notion page content (markdown) for the uploaded files
+  python3 tools/build.py lock                       re-sign the locked design files (only after the owner approves a design change in chat)
 
 ids.json maps "zip" and "01".."NN" to Notion file-upload IDs returned by create-attachment.
 """
-import json, shutil, sys, time, zipfile
+import hashlib, json, shutil, sys, time, zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +18,23 @@ CHANGE_NOTE = ('<callout icon="✍️" color="yellow_bg">\n<b>Want a change?</b>
                '(text or design, any language). Claude checks every 2 hours between 08:00 and 22:00 Israel time, updates the slides and the caption '
                'on this page, writes what it changed in <b>Change log</b> and sets the status to <b>Updated – please review</b>. '
                'When the post is right, set the status to <b>Approved</b>.\n</callout>')
+
+
+LOCKED = ["pro.py", "brand_pro.json", "DESIGN.md"]
+
+
+def _digests():
+    return {f: hashlib.sha256((ROOT / f).read_bytes()).hexdigest() for f in LOCKED}
+
+
+def check_lock():
+    """The design system is locked (DESIGN.md). Refuse to render if a locked file changed."""
+    want = json.loads((ROOT / "design.lock").read_text())
+    changed = [f for f, h in _digests().items() if want.get(f) != h]
+    if changed:
+        raise SystemExit("LOCKED design files changed: " + ", ".join(changed) +
+                         ". The design is locked (see DESIGN.md). Revert them with `git checkout -- " + " ".join(changed) +
+                         "`; only the owner can approve a design change, in chat.")
 
 
 def make_zip(pngs, zip_path, folder):
@@ -35,6 +53,7 @@ def make_zip(pngs, zip_path, folder):
 
 
 def stage(spec_path):
+    check_lock()
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     out = pro.render(spec_path, pro.load_brand(), ROOT / "out_pro")
     sid = spec["id"]
@@ -86,5 +105,8 @@ if __name__ == "__main__":
         stage(sys.argv[2])
     elif cmd == "page":
         page(sys.argv[2], sys.argv[3])
+    elif cmd == "lock":
+        (ROOT / "design.lock").write_text(json.dumps(_digests(), indent=1) + "\n")
+        print("design.lock updated")
     else:
         raise SystemExit(__doc__)

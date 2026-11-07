@@ -3,6 +3,15 @@
 This branch holds the carousel engine for @jacobs_mc_ and the source (spec) of every carousel that lives in Notion.
 A scheduled Claude run uses this file to apply the change requests that the team writes in Notion.
 
+## The design is LOCKED
+
+`DESIGN.md` is the fixed design system, locked on 2026-11-07. `pro.py`, `brand_pro.json` and `DESIGN.md` are signed in `design.lock`, and `tools/build.py stage` refuses to run if any of them changed.
+- In a run, edit only `specs/<Spec ID>.json` and `facts.md`.
+- Never edit, re-sign or work around the locked files.
+- If a request asks for a design-system change (logo size, swoosh, colors, fonts, the general text size, button style, adding eyebrows or boxes and so on), don't apply that part.
+  - Log: `Not applied: <what> (the design is locked; the account owner can approve a design change in a chat with Claude)`.
+- Per-post choices inside the rules are fine: wording, which slide types and backgrounds a post uses, an approved product image, and slide order.
+
 ## Where things are
 
 - Notion calendar: "Instagram Posting Calendar", data source `collection://4cb33d99-c043-829a-9708-872f5d504649` ("All posts").
@@ -49,7 +58,7 @@ If `playwright` is missing and can't be installed, stop: write in `Change log` t
       - the change actually being visible.
       Fix and re-stage until it looks clean.
    6. Commit and push:
-      `git add -A specs upload pro.py brand_pro.json facts.md && git commit -m "<Spec ID>: <short summary>" && git push origin jacobs-ig-engine`.
+      `git add -A specs upload facts.md && git commit -m "<Spec ID>: <short summary>" && git push origin jacobs-ig-engine`.
       Include the commit attribution lines given in the session.
    7. Read `upload/<Spec ID>/<stamp>/manifest.json`. For every file in it, call Notion `create-attachment` with `source_url` = its `url` and `filename` = its `filename`.
       - In each `url`, replace `/jacobs-ig-engine/` with `/<full commit hash>/` (from `git rev-parse HEAD`), so Notion never gets a stale cached copy.
@@ -76,7 +85,7 @@ If `playwright` is missing and can't be installed, stop: write in `Change log` t
   - Don't invent facts, customers, testimonials or urgency. No competitor brand names.
 - Say "detectors", not "tools", for the products.
 
-## Design rules (the owner's, keep them)
+## Design rules (summary; DESIGN.md is the full, locked version)
 
 - Big logo, about 36% of the slide width. `///` at the top right.
 - The bottom swoosh is one thin diagonal line: it starts thin at the bottom left and widens slightly toward the right (the owner's reference). Keep it that way.
