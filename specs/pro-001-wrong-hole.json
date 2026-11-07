@@ -1,0 +1,164 @@
+{
+  "id": "pro-001-wrong-hole",
+  "slides": [
+    {
+      "type": "cover",
+      "title": "Find the leak ==before you break ground==.",
+      "sub": "For plumbers: pinpoint leaks in 30 minutes or less.",
+      "image": "assets/brand/sniffer430-product.png"
+    },
+    {
+      "type": "statement",
+      "title": "Where water appears is not always where the leak is.",
+      "body": "Water travels and collects away from its source. A thermal camera shows where it gathered, not where it escapes.",
+      "image": "assets/brand/application-underground.webp"
+    },
+    {
+      "type": "statement",
+      "theme": "black",
+      "title": "Tracer gas leads you to the source.",
+      "body": "A safe mix of 5% hydrogen and 95% nitrogen escapes through the leak and rises through soil, concrete and tile to the sensor."
+    },
+    {
+      "type": "steps",
+      "title": "Three steps. 30 minutes or less.",
+      "steps": [
+        {
+          "title": "Pressurize",
+          "text": "Fill the line at 1.5–4 bar, within its normal working pressure."
+        },
+        {
+          "title": "Walk the area",
+          "text": "Move the sensor slowly. Readings update every second."
+        },
+        {
+          "title": "Pinpoint",
+          "text": "The highest reading marks the leak. On thick slabs, confirm with a pilot hole."
+        }
+      ]
+    },
+    {
+      "type": "icons",
+      "theme": "dgrey",
+      "title": "Built for the leaks that are hardest to find.",
+      "items": [
+        {
+          "icon": "layers",
+          "title": "Deep and under slab",
+          "text": "10 ft (3 m) of soil, through concrete"
+        },
+        {
+          "icon": "pipe",
+          "title": "Any pipe material",
+          "text": "Copper, PVC, steel, PE, cast iron"
+        },
+        {
+          "icon": "drop",
+          "title": "No draining",
+          "text": "The gas passes through the water"
+        },
+        {
+          "icon": "ppm",
+          "title": "The smallest pinholes",
+          "text": "1 ppm sensitivity"
+        }
+      ]
+    },
+    {
+      "type": "icons",
+      "theme": "white",
+      "title": "Light, wireless and easy to read.",
+      "items": [
+        {
+          "icon": "target",
+          "title": "Wireless sensor",
+          "text": "Stands on its own"
+        },
+        {
+          "icon": "combo",
+          "title": "7-inch touchscreen",
+          "text": "Real-time readings"
+        },
+        {
+          "icon": "wave",
+          "title": "Audible alert",
+          "text": "Beeps faster near the leak"
+        }
+      ],
+      "side": "assets/brand/sniffer430-product.png"
+    },
+    {
+      "type": "icons",
+      "theme": "grey",
+      "title": "==No training== needed.",
+      "items": [
+        "Works like a metal detector",
+        "No calibration or filter changes",
+        "No service plan"
+      ]
+    },
+    {
+      "type": "numbers",
+      "title": "Confidence you can show your client.",
+      "items": [
+        {
+          "value": "40+",
+          "label": "countries"
+        },
+        {
+          "value": "CE",
+          "label": "marked, EU safety standards"
+        },
+        {
+          "value": "1 year",
+          "label": "manufacturer warranty"
+        },
+        {
+          "value": "24 h",
+          "label": "dispatch on business days"
+        }
+      ]
+    },
+    {
+      "type": "cta",
+      "title": "Find it. Mark it. Dig once.",
+      "actions": [
+        {
+          "icon": "cart",
+          "text": "Order now: link in bio"
+        },
+        {
+          "icon": "comment",
+          "text": "DM “LEAK” for a demo video"
+        },
+        {
+          "icon": "save",
+          "text": "Save this post"
+        }
+      ],
+      "proofs": [
+        {
+          "icon": "factory",
+          "text": "Made in\nthe EU"
+        },
+        {
+          "icon": "globe",
+          "text": "40+\ncountries"
+        },
+        {
+          "icon": "clock",
+          "text": "Ships in\n24 hours"
+        }
+      ],
+      "side": "assets/brand/sniffer430-product.png"
+    }
+  ],
+  "caption": "Find the leak before you break ground.\n\nWater travels before it shows, so where it appears is not always where the leak is. A thermal camera shows where water has gathered; tracer gas leads you to where it escapes. A non-toxic, non-flammable mix of 5% hydrogen and 95% nitrogen goes into the line, escapes through the leak and rises through soil, concrete and tile to the sensor.\n\nPressurize the line, walk the area, follow the readings to the highest concentration. 30 minutes or less, even 10 ft deep or under a concrete slab. Any pipe material, no draining, and sensitive enough for the smallest pinholes.\n\nNo training, no calibration, no service plan. Manufactured in Lithuania (EU, CE marked), used in 40+ countries, with a 1-year manufacturer warranty and real support.\n\nOrder through the link in bio, or DM \"LEAK\" for the demo video.",
+  "hashtags": [
+    "#leakdetection",
+    "#plumbing",
+    "#tracergas",
+    "#leakdetector",
+    "#plumber"
+  ]
+}

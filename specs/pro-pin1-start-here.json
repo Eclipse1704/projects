@@ -1,0 +1,141 @@
+{
+  "id": "pro-pin1-start-here",
+  "slides": [
+    {
+      "type": "cover",
+      "index": "01",
+      "title": "Locate hidden leaks ==quickly and reliably==.",
+      "sub": "Water leak detectors for professionals, made in the EU.",
+      "image": "assets/brand/sniffer430-product.png"
+    },
+    {
+      "type": "statement",
+      "title": "Built with the people who use it.",
+      "body": "We develop our detectors together with the professionals who use them, and keep improving them.",
+      "image": "assets/brand/multipro-field.jpg"
+    },
+    {
+      "type": "products",
+      "title": "One range. Three detectors.",
+      "items": [
+        {
+          "image": "assets/brand/sniffer430-product.png",
+          "title": "Tracer gas detector",
+          "text": "Pinpoints even the smallest leaks."
+        },
+        {
+          "image": "assets/brand/lixener30-product.png",
+          "title": "Acoustic detector",
+          "text": "Hears leaks in metal and plastic pipes."
+        },
+        {
+          "image": "assets/brand/multipro-product.png",
+          "title": "2-in-1 platform",
+          "text": "Acoustic and tracer gas in one unit."
+        }
+      ]
+    },
+    {
+      "type": "icons",
+      "theme": "dgrey",
+      "title": "The right method for every leak.",
+      "items": [
+        {
+          "icon": "target",
+          "title": "Tracer gas",
+          "text": "The most accurate. Finds the exact source."
+        },
+        {
+          "icon": "wave",
+          "title": "Acoustic",
+          "text": "The most versatile. Homes, gardens, large lines."
+        },
+        {
+          "icon": "drop",
+          "title": "Thermal cameras",
+          "text": "Show where water gathers, not the leak."
+        }
+      ]
+    },
+    {
+      "type": "icons",
+      "theme": "white",
+      "title": "Not only ==water lines==.",
+      "items": [
+        "Hot and cold water",
+        "Steam systems",
+        "Propane and butane",
+        "Oil and fuel"
+      ],
+      "side": "assets/brand/sniffer430-product.png"
+    },
+    {
+      "type": "numbers",
+      "title": "Made, certified and supported.",
+      "items": [
+        {
+          "value": "40+",
+          "label": "countries use our detectors"
+        },
+        {
+          "value": "CE",
+          "label": "marked, to EU safety standards"
+        },
+        {
+          "value": "1 year",
+          "label": "manufacturer warranty"
+        },
+        {
+          "value": "24 h",
+          "label": "dispatch on business days"
+        }
+      ]
+    },
+    {
+      "type": "cta",
+      "title": "See the range in action.",
+      "actions": [
+        {
+          "icon": "cart",
+          "text": "Order now: link in bio"
+        },
+        {
+          "icon": "comment",
+          "text": "DM “LEAK” for a demo video"
+        },
+        {
+          "icon": "follow",
+          "text": "Follow @jacobs_mc_"
+        }
+      ],
+      "proofs": [
+        {
+          "icon": "factory",
+          "text": "Made in\nthe EU"
+        },
+        {
+          "icon": "globe",
+          "text": "40+\ncountries"
+        },
+        {
+          "icon": "clock",
+          "text": "Ships in\n24 hours"
+        }
+      ],
+      "side": "assets/brand/lixener30-product.png"
+    }
+  ],
+  "caption": "Start here. Jacob's MC manufactures professional water leak detectors in Lithuania (EU), developed and continuously improved together with the professionals who use them.\n\nThe range: a tracer gas detector that finds even the smallest leaks in underground, underfloor and in-wall pipes, an acoustic detector for metal and plastic pipes under floors, in walls and deep underground, and a 2-in-1 platform that combines both.\n\nTracer gas is the most accurate method and pinpoints the exact source; acoustic is the most versatile. A thermal camera only shows where water has gathered. And tracer gas is not limited to water: it can test hot and cold water, steam, propane, butane, oil and fuel systems.\n\nCE marked, used in more than 40 countries, a 1-year manufacturer warranty and dispatch within 24 hours on business days.\n\nOrder through the link in bio, or DM \"LEAK\" for a demo video.",
+  "hashtags": [
+    "#leakdetection",
+    "#leakdetector",
+    "#tracergas",
+    "#plumbing",
+    "#waterleak"
+  ],
+  "notion": {
+    "page_id": "17633d99-c043-83da-b588-81fa9c88ef14",
+    "zip_name": "Pin-Step1-Start-here.zip",
+    "note": "<b>Pinned post · Step 1 of 3. Post this one first.</b> Before you start, unpin the 3 old pinned posts on your profile (tap the post → ⋯ → Unpin). Don't pin this one yet: you pin all 3 at the end (see Step 3). Next: Step 2 · For plumbers."
+  }
+}

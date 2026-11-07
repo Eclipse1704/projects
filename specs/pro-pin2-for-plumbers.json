@@ -1,0 +1,159 @@
+{
+  "id": "pro-pin2-for-plumbers",
+  "slides": [
+    {
+      "type": "cover",
+      "theme": "dgrey",
+      "index": "02",
+      "title": "Turn a multi-day leak hunt into a 30-minute job.",
+      "sub": "For plumbers who want to find leaks themselves.",
+      "image": "assets/brand/application-underground.webp",
+      "image_style": "wide"
+    },
+    {
+      "type": "statement",
+      "title": "Precision without tearing the ==room apart==.",
+      "body": "Locate the leak before you open anything: less damage, a faster job, a result your client can trust.",
+      "side": "assets/brand/sniffer430-product.png"
+    },
+    {
+      "type": "statement",
+      "theme": "black",
+      "title": "Hydrogen finds the way out.",
+      "body": "Tracer gas is a safe mix of 5% hydrogen and 95% nitrogen. Its tiny molecules rise through soil, concrete and tile to the sensor."
+    },
+    {
+      "type": "steps",
+      "title": "Pressurize. Walk. Pinpoint.",
+      "steps": [
+        {
+          "title": "Pressurize",
+          "text": "Bring the line to 1.5–4 bar, within its working pressure. No draining."
+        },
+        {
+          "title": "Walk",
+          "text": "Move the sensor like a metal detector. The beep speeds up as readings rise."
+        },
+        {
+          "title": "Pinpoint",
+          "text": "The highest reading marks the leak. Confirm with a small pilot hole."
+        }
+      ]
+    },
+    {
+      "type": "icons",
+      "theme": "dgrey",
+      "title": "Underground, underfloor, in the wall.",
+      "items": [
+        {
+          "icon": "layers",
+          "title": "Underground",
+          "text": "Up to 10 ft (3 m) deep"
+        },
+        {
+          "icon": "pipe",
+          "title": "Under the floor",
+          "text": "Through slab, tile and wood"
+        },
+        {
+          "icon": "target",
+          "title": "In the wall",
+          "text": "The right wall first, then the spot"
+        },
+        {
+          "icon": "drop",
+          "title": "Pools and spas",
+          "text": "Pool and spa plumbing"
+        }
+      ]
+    },
+    {
+      "type": "compare",
+      "title": "Why not just a ==thermal camera==?",
+      "left": {
+        "label": "Thermal camera",
+        "points": [
+          "Shows where water gathers",
+          "Unreliable on wet, shiny tile",
+          "Cannot see underground"
+        ]
+      },
+      "right": {
+        "label": "Tracer gas",
+        "points": [
+          "Detects gas at the leak",
+          "Through tile, slab and soil",
+          "No line of sight needed"
+        ]
+      }
+    },
+    {
+      "type": "numbers",
+      "title": "The numbers that matter.",
+      "items": [
+        {
+          "value": "30 min",
+          "label": "or less to locate a leak"
+        },
+        {
+          "value": "10 ft",
+          "label": "deep through soil (3 m)"
+        },
+        {
+          "value": "1 ppm",
+          "label": "hydrogen sensitivity"
+        },
+        {
+          "value": "1.5–4",
+          "label": "bar, within the line's working pressure"
+        }
+      ]
+    },
+    {
+      "type": "cta",
+      "title": "Pinpoint it. Dig once.",
+      "actions": [
+        {
+          "icon": "cart",
+          "text": "Order now: link in bio"
+        },
+        {
+          "icon": "comment",
+          "text": "DM “LEAK” for a demo video"
+        },
+        {
+          "icon": "save",
+          "text": "Save this post"
+        }
+      ],
+      "proofs": [
+        {
+          "icon": "factory",
+          "text": "Made in\nthe EU"
+        },
+        {
+          "icon": "globe",
+          "text": "40+\ncountries"
+        },
+        {
+          "icon": "clock",
+          "text": "Ships in\n24 hours"
+        }
+      ],
+      "side": "assets/brand/sniffer430-product.png"
+    }
+  ],
+  "caption": "Turn a multi-day leak hunt into a 30-minute job: show up, pinpoint the leak, move on to the next job.\n\nTracer gas is 5% hydrogen and 95% nitrogen, non-toxic, non-flammable and eco-friendly. Its tiny molecules pass through soil, concrete and tile, so the sensor reads them above the leak. Pressurize the line to 1.5–4 bar (20–60 psi), within its normal working pressure and without draining it, walk the area like a metal detector, and follow the readings to the highest point.\n\nIt works underground (even 10 ft deep), under concrete slab, tile and wood, in walls, and in pool and spa plumbing. Unlike a thermal camera, it detects the gas at the leak itself, not just where water has gathered.\n\nLess damage, a faster job, and a result your client can trust.\n\nSave this post. Order through the link in bio, or DM \"LEAK\" for a demo video.",
+  "hashtags": [
+    "#leakdetection",
+    "#plumber",
+    "#plumbing",
+    "#slableak",
+    "#tracergas"
+  ],
+  "notion": {
+    "page_id": "50f33d99-c043-82e0-aebf-0139762bdb6b",
+    "zip_name": "Pin-Step2-For-plumbers.zip",
+    "note": "<b>Pinned post · Step 2 of 3.</b> Post this after Step 1. Don't pin it yet. Next: Step 3 · For dealers."
+  }
+}

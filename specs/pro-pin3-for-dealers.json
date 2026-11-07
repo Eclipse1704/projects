@@ -1,0 +1,132 @@
+{
+  "id": "pro-pin3-for-dealers",
+  "slides": [
+    {
+      "type": "cover",
+      "theme": "black",
+      "index": "03",
+      "title": "Add professional leak detection to your range.",
+      "sub": "For dealers and distributors who serve the trade.",
+      "image": "assets/brand/lixener30-product.png"
+    },
+    {
+      "type": "statement",
+      "title": "Partners who already serve the trade.",
+      "body": "We work with retailers, resellers and distributors who supply contractors, plumbers and utilities.",
+      "image": "assets/brand/application-underground.webp"
+    },
+    {
+      "type": "stat",
+      "value": "$300–$1,300",
+      "label": "what US plumbers typically charge for one leak detection",
+      "body": "A service your customers bill on its own, with equipment you supply.",
+      "source": "Typical US range · Jacob's MC pricing guide"
+    },
+    {
+      "type": "products",
+      "title": "A complete leak detection range.",
+      "items": [
+        {
+          "image": "assets/brand/sniffer430-product.png",
+          "title": "Tracer gas detector",
+          "text": "Pinpoints leaks in 30 minutes or less."
+        },
+        {
+          "image": "assets/brand/lixener30-product.png",
+          "title": "Acoustic detector",
+          "text": "Highly sensitive, with noise filters."
+        },
+        {
+          "image": "assets/brand/multipro-product.png",
+          "title": "2-in-1 platform",
+          "text": "Both technologies in one unit."
+        }
+      ]
+    },
+    {
+      "type": "icons",
+      "theme": "dgrey",
+      "title": "Easy to sell. Easy to support.",
+      "items": [
+        {
+          "icon": "target",
+          "title": "Simple to demonstrate",
+          "text": "No training needed"
+        },
+        {
+          "icon": "shield",
+          "title": "Low after-sales load",
+          "text": "No calibration or service plan"
+        },
+        {
+          "icon": "phone",
+          "title": "Manufacturer support",
+          "text": "1-year warranty, help by phone"
+        },
+        {
+          "icon": "clock",
+          "title": "Fast dispatch",
+          "text": "Ships within 24 hours"
+        }
+      ]
+    },
+    {
+      "type": "icons",
+      "theme": "white",
+      "title": "What your customers ==get==.",
+      "items": [
+        "Leaks found in 30 minutes or less",
+        "Through slab and 10 ft of soil",
+        "Any pipe, no draining",
+        "Even the smallest pinholes"
+      ],
+      "side": "assets/brand/sniffer430-product.png"
+    },
+    {
+      "type": "cta",
+      "title": "Become a Jacob's MC dealer.",
+      "actions": [
+        {
+          "icon": "comment",
+          "text": "DM us “DEALER”"
+        },
+        {
+          "icon": "link",
+          "text": "Apply at jacobs-mc.co/dealer"
+        },
+        {
+          "icon": "follow",
+          "text": "Follow @jacobs_mc_"
+        }
+      ],
+      "proofs": [
+        {
+          "icon": "factory",
+          "text": "Made in\nthe EU"
+        },
+        {
+          "icon": "globe",
+          "text": "40+\ncountries"
+        },
+        {
+          "icon": "clock",
+          "text": "Ships in\n24 hours"
+        }
+      ],
+      "side": "assets/brand/lixener30-product.png"
+    }
+  ],
+  "caption": "Dealers and distributors: add professional leak detection to your range.\n\nJacob's MC works with retailers, resellers and distributors who supply contractors, plumbers, utilities and other professionals. In the US, plumbers typically charge $300–$1,300 for a single leak detection: a service they can bill on its own, with equipment you supply.\n\nThe range: a tracer gas detector that pinpoints leaks in 30 minutes or less, even under a concrete slab; a highly sensitive acoustic detector with noise filters; and a 2-in-1 platform with both technologies. Also available: a Full HD pipe inspection camera and an under-floor drying system.\n\nEasy to sell and easy to support: no training needed, no calibration or service plan, a 1-year manufacturer warranty with most issues resolved by phone, and dispatch within 24 hours on business days. Manufactured in Lithuania (EU), CE marked, used in more than 40 countries.\n\nDM us \"DEALER\" or apply at jacobs-mc.co/dealer.\n\nTypical US range from the Jacob's MC pricing guide.",
+  "hashtags": [
+    "#leakdetection",
+    "#plumbingsupply",
+    "#distributors",
+    "#dealers",
+    "#plumbing"
+  ],
+  "notion": {
+    "page_id": "52133d99-c043-83cd-a197-01df1f85a695",
+    "zip_name": "Pin-Step3-For-dealers.zip",
+    "note": "<b>Pinned post · Step 3 of 3. Post this one last, then pin all 3 in this order: For dealers → For plumbers → Start here</b> (tap the post → ⋯ → Pin to your profile). Instagram shows the post you pinned last first, so Start here ends up first on the left. If the order looks wrong, unpin all 3 and pin again in this order."
+  }
+}

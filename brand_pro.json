@@ -1,0 +1,47 @@
+{
+  "name": "Jacob's MC",
+  "handle": "@jacobs_mc_",
+  "colors_note": "red = jacobs-mc.com theme colour #D32615 (site). white/grey/black still placeholders until the brochure arrives.",
+  "colors": {
+    "red": "#D32615",
+    "white": "#F6F6F4",
+    "grey": "#E4E5E3",
+    "grey_mid": "#C9CBC9",
+    "black": "#1E1E1E",
+    "black2": "#2B2B2B",
+    "text2": "#4F5456",
+    "muted": "#8A8F91",
+    "dgrey": "#4E5155"
+  },
+  "head_font": {
+    "family": "Inter Display",
+    "weight": 800,
+    "letter_spacing": "-.025em",
+    "fallback": "'Inter',sans-serif",
+    "files": {}
+  },
+  "body_font": {
+    "family": "Inter",
+    "fallback": "sans-serif",
+    "files": {}
+  },
+  "logo_font": "Inter Display",
+  "logo": "assets/brand/jacobs-mc-logo-red.png",
+  "logo_white": "assets/brand/jacobs-mc-logo-white.png",
+  "banned_on_slides": [
+    "4,450",
+    "4450",
+    "2,950",
+    "2950",
+    "7,400",
+    "7400",
+    "Sniffer430",
+    "SNIFFER430",
+    "Sniffer 430",
+    "Lixener30",
+    "LIXENER30",
+    "MultiPro",
+    "MULTIPRO"
+  ],
+  "logo_dark": "assets/brand/jacobs-mc-logo-red-on-dark.png"
+}
