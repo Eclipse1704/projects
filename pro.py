@@ -4,7 +4,7 @@ Rules baked in:
 - Backgrounds: white, grey (light), dgrey (mid grey), black, red. Subtle gradients.
 - On red: white only (no black text or elements). On dark: red only for logo, button, /// and swoosh.
 - Big logo (~36% width), "///" top right, a thin diagonal swoosh at the bottom that widens slightly to the right.
-- Text-heavy slides grow their text (up to 1.3x) when there is room. Products on red/dark sit on a soft light spot.
+- Text-heavy slides grow their text (up to 1.3x) when there is room. Products on red/dark get a soft studio backlight, reflection and contact shadow.
 - No eyebrow labels, no boxes: icon rows, dividers, big product cut-outs.
 - Every call to action is a button. One primary button per final slide.
 
@@ -215,14 +215,21 @@ mark{background:none;color:var(--acc)}
 .proofs{margin-top:auto;display:flex;gap:40px;padding-top:30px}
 .proof{display:flex;flex-direction:column;gap:12px;font-family:var(--head);font-weight:var(--head-w);font-size:36px;line-height:1.08}
 .proof .ic{width:58px;height:58px;color:var(--acc)}
-.k-cta .side{bottom:280px;right:-40px;max-width:540px;max-height:480px}
-.spot{position:absolute;z-index:1;border-radius:50%;pointer-events:none}
-.t-red .spot{background:radial-gradient(closest-side,rgba(255,255,255,.72),rgba(255,255,255,.34) 50%,rgba(255,255,255,0))}
-.t-black .spot,.t-dgrey .spot{background:radial-gradient(closest-side,rgba(255,255,255,.26),rgba(255,255,255,.1) 50%,rgba(255,255,255,0))}
-.k-cover .spot{right:-130px;bottom:50px;width:860px;height:800px}
-.has-side .spot{right:-170px;bottom:120px;width:800px;height:760px}
-.k-cta .spot{bottom:150px;height:740px}
-.t-red .side,.t-red .hero{filter:drop-shadow(0 0 1.5px rgba(255,255,255,.95)) drop-shadow(0 0 14px rgba(255,255,255,.45)) drop-shadow(0 24px 28px rgba(0,0,0,.3))}
+.k-cta .side{right:-50px;bottom:205px;max-width:590px;max-height:460px}
+.k-cta .proofs{gap:24px}
+/* studio backlight for product cut-outs on red/black/dark grey (owner-approved 2026-11-07):
+   a wide, asymmetric soft glow behind the upper right of the product, a dark-red reflection and a contact shadow */
+.glow{position:absolute;z-index:1;pointer-events:none;transform:rotate(-9deg);filter:blur(10px);
+  background:radial-gradient(ellipse 30% 26% at 62% 44%,rgba(255,248,244,.88),rgba(255,248,244,0) 100%),
+             radial-gradient(ellipse 50% 46% at 55% 50%,rgba(255,222,210,.6),rgba(255,160,140,.26) 55%,rgba(255,120,100,0) 100%)}
+.t-black .glow,.t-dgrey .glow{opacity:.45}
+.reflect{position:absolute;z-index:1;pointer-events:none;object-fit:contain;transform:scaleY(-1);opacity:.3;filter:brightness(.5) blur(1.2px);
+  -webkit-mask-image:linear-gradient(to top,rgba(0,0,0,.95),rgba(0,0,0,0) 36%);mask-image:linear-gradient(to top,rgba(0,0,0,.95),rgba(0,0,0,0) 36%)}
+.contact{position:absolute;z-index:1;height:38px;border-radius:50%;pointer-events:none;filter:blur(5px);
+  background:radial-gradient(closest-side,rgba(45,0,0,.6),rgba(45,0,0,0))}
+.t-black .contact,.t-dgrey .contact{background:radial-gradient(closest-side,rgba(0,0,0,.7),rgba(0,0,0,0))}
+.floor{position:absolute;z-index:0;left:0;right:0;bottom:0;height:320px;pointer-events:none;background:linear-gradient(180deg,rgba(0,0,0,0),rgba(0,0,0,.12))}
+.lit .side,.lit .hero{filter:drop-shadow(0 0 1px rgba(255,255,255,.55)) drop-shadow(0 6px 8px rgba(0,0,0,.22)) brightness(1.04) contrast(1.05)}
 .k-cta.has-side .main>.cta-title,.k-cta.has-side .main>.lines{max-width:960px}
 .k-cta.has-side .main>.cta-btn{max-width:none}
 .cta-btn,.ln{white-space:nowrap}
@@ -257,6 +264,16 @@ FIT_JS = """
         return t.right > r.left - gap && t.left < r.right && t.bottom > r.top - gap && t.top < r.bottom; }); };
     let g = 0;
     while (hit() && g++ < 8) { const r = side.getBoundingClientRect(); side.style.maxWidth = (r.width * 0.92) + 'px'; side.style.maxHeight = (r.height * 0.92) + 'px'; }
+  }
+  // studio backlight around the product's final position
+  const prod = document.querySelector('.lit .side') || document.querySelector('.lit .hero');
+  if (prod) {
+    const r = prod.getBoundingClientRect();
+    const gl = document.querySelector('.glow'), rf = document.querySelector('.reflect'), ct = document.querySelector('.contact');
+    const W = r.width * 1.35, H = r.height * 1.55, cx = r.left + r.width * 0.66, cy = r.top + r.height * 0.32;
+    Object.assign(gl.style, {left: (cx - W * 0.5) + 'px', top: (cy - H * 0.5) + 'px', width: W + 'px', height: H + 'px'});
+    Object.assign(rf.style, {left: r.left + 'px', top: (r.bottom - 3) + 'px', width: r.width + 'px', height: r.height + 'px'});
+    Object.assign(ct.style, {left: (r.left + r.width * 0.03) + 'px', top: (r.bottom - 20) + 'px', width: (r.width * 0.94) + 'px'});
   }
   return { overflow: over() };
 }
@@ -439,7 +456,10 @@ def slide_html(spec, s, i, n, brand):
         cls = " has-side"
     cut_out = s.get("side") or (kind == "cover" and s.get("image") and s.get("image_style") != "wide")
     if cut_out and theme in ("red", "black", "dgrey"):
-        extra = '<div class="spot"></div>' + extra  # keeps red/black products readable on red/dark slides
+        # studio backlight: keeps red/black products separated from red/dark backgrounds (placed by FIT_JS)
+        extra = (f'<div class="floor"></div><div class="glow"></div><div class="contact"></div>'
+                 f'<img class="reflect" src="{data_uri(s.get("side") or s["image"])}">') + extra
+        cls += " lit"
     return f"""<!doctype html><html><head><meta charset="utf-8"><style>{font_faces(brand)}{root}{CSS}</style></head>
 <body><div class="slide k-{kind} t-{theme}{cls}">{extra}{SWOOSH}
 <div class="top">{logo_html(brand, theme, kind)}{SLASHES}</div>

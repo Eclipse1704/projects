@@ -1,4 +1,4 @@
-# Jacob's MC carousel design system: LOCKED (v4, 2026-11-07)
+# Jacob's MC carousel design system: LOCKED (v4.1, 2026-11-07)
 
 This is the fixed design direction for every @jacobs_mc_ carousel from now on. It was set by the owner over several review rounds and locked on 2026-11-07.
 
@@ -48,7 +48,11 @@ This is the fixed design direction for every @jacobs_mc_ carousel from now on. I
 - No eyebrow labels (small text above a title with a red line). They read as AI-made.
 - No boxes or cards around text. Use icon rows, thin dividers, two-column comparisons and big numbers.
 - **Product as hero:** use sharp cut-out product images from `assets/brand/`. They are large and bleed off the right edge.
-- On red, black and dark grey slides, a product cut-out sits on a soft light spot with a thin light rim so it stays visible.
+- **Studio backlight**, approved by the owner on 2026-11-07, for product cut-outs on red, black and dark grey slides (cover, last slide and any slide with a product):
+  - A wide, elliptical, asymmetric soft glow behind the upper right of the product, slightly off center. Soft white fading through a warm red into the background. Not a circular halo or ring, and not a beam.
+  - Gentle highlights on the product edges that keep its true black and red.
+  - A subtle dark-red reflection under the product and a natural contact shadow.
+  - It should separate the product from the background without looking like a special effect.
 - Photos: only sharp ones (`multipro-field.jpg` and the application images). Use them as a rounded photo, or as a tilted card on a cover. Never use blurry video frames.
 - **Calls to action:** every call to action is a button. The last slide has exactly one primary button; other actions are lines with icons. Proof points are a row of large icons with text at the bottom.
 
