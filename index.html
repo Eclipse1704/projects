@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Start Doing Leak Detection</title>
+<meta name="description" content="Leak detection jobs typically pay $300–$1,300 in the US. See what it could add to your month.">
+<meta property="og:title" content="Stop turning down leak calls">
+<meta property="og:description" content="Leak detection jobs typically pay $300–$1,300 in the US. See what it could add to your month.">
+<meta property="og:image" content="https://eclipse1704.github.io/projects/a/og.jpg">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#F6F4F0">
+<link rel="icon" href="a/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..900&display=swap" rel="stylesheet">
+<style>
+/* The Underground Plumber: ink line art on paper with one yellow highlighter. The page is a cut through the ground: as you scroll, the plumber walks to the leak and the water keeps flowing in the pipe between sections. */
+:root{
+  --paper:#F6F4F0; --card:#FFFFFF; --ink:#111114; --soft:#66666C; --line:#E4E0D8; --yellow:#FFD400; --water:#2F7BE5;
+  --font:"Inter", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --ease:cubic-bezier(.2,.7,.2,1);
+  color-scheme: light;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:400 17px/1.55 var(--font);overflow-x:hidden}
+img{max-width:100%;height:auto;display:block}
+a{color:inherit}
+h1,h2{margin:0;font-weight:900;letter-spacing:-.03em;line-height:1.02;text-wrap:balance}
+h1{font-size:clamp(44px,8.6vw,84px)}
+h2{font-size:clamp(30px,5.4vw,52px)}
+p{margin:0}
+.wrap{max-width:1120px;margin:0 auto;padding:0 22px}
+.muted{color:var(--soft)}
+
+/* highlighter: text is always readable; the marker draws in */
+.hl{background-image:linear-gradient(var(--yellow),var(--yellow));background-repeat:no-repeat;background-position:0 88%;background-size:100% 40%;padding:0 .04em}
+.js .hl{background-size:0% 40%;transition:background-size .9s var(--ease) .15s}
+.js .hl.in{background-size:100% 40%}
+
+/* reveal: starts visible, settles into place */
+.js .rv{opacity:.4;transform:translateY(22px);transition:opacity .7s var(--ease),transform .9s var(--ease)}
+.js .rv.in{opacity:1;transform:none}
+.js .rv.d1{transition-delay:.08s}.js .rv.d2{transition-delay:.16s}.js .rv.d3{transition-delay:.24s}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:58px;padding:0 26px;border-radius:14px;font:800 17px var(--font);text-decoration:none;border:2px solid var(--ink);cursor:pointer;position:relative;overflow:hidden;transition:transform .2s var(--ease),box-shadow .2s var(--ease)}
+.btn:hover{transform:translateY(-2px)}
+.btn:active{transform:translateY(1px)}
+.btn:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--water);outline-offset:3px}
+.btn-ink{background:var(--ink);color:#fff;box-shadow:0 6px 0 -1px var(--yellow)}
+.btn-ink:hover{box-shadow:0 9px 0 -1px var(--yellow)}
+.btn-line{background:transparent;color:var(--ink)}
+.btn .arr{display:inline-block;transition:transform .25s var(--ease)}
+.btn:hover .arr{transform:translateX(4px)}
+
+/* header */
+header{position:sticky;top:0;z-index:20;background:rgba(246,244,240,.86);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-bottom:1px solid transparent;transition:border-color .3s}
+header.scrolled{border-bottom-color:var(--line)}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;height:64px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:15px;text-decoration:none}
+.brand img{width:34px;height:34px;border-radius:50%}
+.bar .btn{min-height:42px;padding:0 16px;font-size:14px;border-radius:11px;box-shadow:none}
+
+/* hero */
+.hero{padding-top:34px}
+.hero-grid{display:grid;gap:26px;align-items:center}
+.hero .lead{font-size:clamp(18px,2.2vw,21px);color:#36363B;max-width:540px}
+.btns{display:flex;flex-wrap:wrap;gap:12px}
+.btns .btn{flex:1 1 220px}
+.kpis{display:flex;flex-wrap:wrap;gap:22px;margin-top:6px}
+.kpi b{display:block;font-size:26px;font-weight:900;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.kpi span{font-size:14px;color:var(--soft)}
+.scene{width:100%;height:auto;overflow:visible}
+.scene-wrap{position:relative;margin:0 -22px}
+.scene-cap{font-size:13px;font-weight:700;color:var(--soft);display:flex;align-items:center;gap:8px;margin:2px 22px 0}
+.scene-cap i{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--water)}
+
+/* flowing pipe divider */
+.pipe{display:block;width:100%;height:46px}
+.pipe .flow{stroke-dasharray:18 14;animation:flow 1.6s linear infinite}
+@keyframes flow{to{stroke-dashoffset:-64}}
+
+section{padding:72px 0}
+.head{display:grid;gap:12px;max-width:620px}
+
+/* calculator */
+.calc-grid{display:grid;gap:30px;align-items:center}
+.calc{background:var(--card);border-radius:24px;padding:26px;display:grid;gap:26px;box-shadow:0 1px 0 var(--line),0 20px 50px rgba(17,17,20,.08)}
+.row{display:grid;gap:8px}
+.row-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.row-top label{font-weight:700}
+.row-top output{font-weight:900;font-size:24px;font-variant-numeric:tabular-nums}
+.hint{font-size:14px;color:var(--soft)}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:8px;border-radius:999px;background:linear-gradient(to right,var(--ink) 0 var(--p,50%),#E9E5DD var(--p,50%) 100%);margin:10px 0;cursor:pointer}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:30px;height:30px;border-radius:50%;background:var(--yellow);border:3px solid var(--ink);transition:transform .15s}
+input[type=range]:active::-webkit-slider-thumb{transform:scale(1.15)}
+input[type=range]::-moz-range-thumb{width:24px;height:24px;border-radius:50%;background:var(--yellow);border:3px solid var(--ink)}
+.result{background:var(--ink);color:#fff;border-radius:18px;padding:22px;display:grid;gap:6px;position:relative;overflow:hidden}
+.result .muted{color:#A9A9B0}
+.big{font-size:clamp(50px,9vw,76px);font-weight:900;letter-spacing:-.035em;line-height:1;font-variant-numeric:tabular-nums}
+.sub{font-weight:600;font-variant-numeric:tabular-nums;color:#E8E8EC}
+.coins{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px}
+.coins i{width:10px;height:10px;border-radius:50%;background:var(--yellow);opacity:.25;transition:opacity .3s,transform .3s}
+.coins i.on{opacity:1;transform:translateY(-2px)}
+.note{font-size:13px;color:var(--soft)}
+
+/* product */
+.prod-grid{display:grid;gap:30px;align-items:center}
+.prod-ph{position:relative;background:radial-gradient(ellipse at 50% 62%,#FFFFFF 0%,#EDE9E2 68%);border-radius:28px;padding:34px 22px;display:grid;place-items:center;overflow:hidden;min-height:300px}
+.prod-ph img{max-height:280px;width:auto;will-change:transform;filter:drop-shadow(0 22px 22px rgba(17,17,20,.18))}
+.prod-ph .tag{position:absolute;left:18px;top:18px;background:var(--yellow);font-weight:800;font-size:13px;padding:6px 12px;border-radius:999px}
+.feats{margin:0;padding:0;list-style:none;display:grid;gap:14px}
+.feats li{display:grid;grid-template-columns:44px 1fr;gap:14px;align-items:start}
+.feats li svg{width:44px;height:44px}
+.feats b{display:block}
+.feats span{color:var(--soft);font-size:15px}
+.small-links{display:flex;flex-wrap:wrap;gap:8px 22px;font-size:15px;font-weight:700}
+.small-links a{text-decoration:none;background-image:linear-gradient(var(--yellow),var(--yellow));background-size:100% 3px;background-position:0 100%;background-repeat:no-repeat;transition:background-size .25s}
+.small-links a:hover{background-size:100% 45%}
+.trust{font-size:14px;color:var(--soft)}
+
+.contact{padding:26px 0 30px;text-align:center;display:grid;gap:4px}
+.contact b{font-size:22px;letter-spacing:-.01em}
+footer{padding:0 0 110px;font-size:12px;color:var(--soft);text-align:center}
+
+/* sticky buy bar on phones */
+.dock{position:fixed;left:12px;right:12px;bottom:12px;z-index:30;display:flex;gap:10px;align-items:center;background:var(--ink);color:#fff;border-radius:18px;padding:10px 10px 10px 18px;box-shadow:0 14px 40px rgba(17,17,20,.3);transform:translateY(140%);transition:transform .5s var(--ease)}
+.dock.show{transform:none}
+.dock p{flex:1;font-size:14px;line-height:1.3}
+.dock p b{display:block;font-size:15px}
+.dock .btn{min-height:46px;padding:0 18px;font-size:15px;background:var(--yellow);color:var(--ink);border-color:var(--yellow);box-shadow:none}
+
+@media (min-width:900px){
+  .hero{padding-top:56px}
+  h1{font-size:clamp(44px,5.6vw,74px)}
+  .hero-grid{grid-template-columns:1fr 1.05fr}
+  .scene-wrap{margin:0}
+  .calc-grid{grid-template-columns:.9fr 1.1fr}
+  .prod-grid{grid-template-columns:1.05fr .95fr}
+  section{padding:104px 0}
+  .dock{left:auto;right:24px;bottom:24px;width:380px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  .js .rv{opacity:1;transform:none}
+  .js .hl{background-size:100% 40%}
+}
+</style>
+</head>
+<body>
+<script>document.documentElement.classList.add("js")</script>
+
+<header id="hdr">
+  <div class="wrap bar">
+    <a class="brand" href="#top"><img src="a/logo.png" alt="" width="34" height="34">The Underground Plumber</a>
+    <a class="btn btn-ink" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="header_buy">Get the detector</a>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <div class="hero-grid">
+      <div style="display:grid;gap:22px">
+        <h1 class="rv">Stop turning down <span class="hl">leak calls.</span></h1>
+        <p class="lead rv d1">Leak detection jobs typically pay $300–$1,300 in the US. With tracer gas you find the leak in about 30 minutes, then dig once.</p>
+        <div class="btns rv d2" id="hero-btns">
+          <a class="btn btn-ink" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="hero_buy">Get the detector <span class="arr">→</span></a>
+          <a class="btn btn-line" href="#calc">What could it pay me?</a>
+        </div>
+        <div class="kpis rv d3">
+          <div class="kpi"><b>$300–$1,300</b><span>typical job, US</span></div>
+          <div class="kpi"><b>~30 min</b><span>typical locate</span></div>
+          <div class="kpi"><b>~10 ft</b><span>typical depth</span></div>
+        </div>
+      </div>
+
+      <div class="scene-wrap" aria-hidden="true">
+        <svg class="scene" id="scene" viewBox="40 20 720 300">
+          <defs>
+            <pattern id="soil" width="44" height="30" patternUnits="userSpaceOnUse">
+              <rect x="4" y="8" width="16" height="3" fill="#111114" opacity=".22"/>
+              <rect x="26" y="22" width="12" height="3" fill="#111114" opacity=".16"/>
+            </pattern>
+          </defs>
+          <rect x="0" y="170" width="800" height="160" fill="url(#soil)"/>
+          <line x1="0" y1="170" x2="800" y2="170" stroke="#111114" stroke-width="4"/>
+          <!-- pipe -->
+          <path d="M50 172 V262 H750 V172" fill="none" stroke="#111114" stroke-width="5" stroke-linejoin="round"/>
+          <path class="flow" d="M50 176 V262 H750 V176" fill="none" stroke="#2F7BE5" stroke-width="3" opacity=".75" style="stroke-dasharray:14 16;animation:flow 1.8s linear infinite"/>
+          <!-- gas rising at the leak -->
+          <g id="gas"></g>
+          <!-- target / leak -->
+          <g id="target" transform="translate(560 262)">
+            <circle id="found-ring" r="22" fill="none" stroke="#FFD400" stroke-width="6" opacity="0"/>
+            <circle r="17" fill="#F6F4F0" stroke="#111114" stroke-width="4"/>
+            <line x1="0" y1="-27" x2="0" y2="27" stroke="#111114" stroke-width="4"/>
+            <line x1="-27" y1="0" x2="27" y2="0" stroke="#111114" stroke-width="4"/>
+            <circle r="5" fill="#111114"/>
+          </g>
+          <!-- beep rings -->
+          <g id="rings"></g>
+          <!-- plumber with detector -->
+          <g id="pro" transform="translate(150 170)">
+            <g id="bob">
+              <path d="M-26 0 C-26 -64 -15 -98 0 -98 C15 -98 26 -64 26 0 Z" fill="#111114"/>
+              <circle cx="0" cy="-122" r="19" fill="#111114"/>
+              <rect x="-19" y="-126" width="46" height="7" rx="3.5" fill="#111114"/>
+              <rect x="-15" y="-125" width="27" height="4" fill="#F6F4F0"/>
+              <rect x="-12" y="-74" width="25" height="18" rx="4" fill="#fff"/>
+              <g id="bars" fill="#111114">
+                <rect x="-8" y="-62" width="3.5" height="3"/><rect x="-3" y="-62" width="3.5" height="3"/><rect x="2" y="-62" width="3.5" height="3"/><rect x="7" y="-62" width="3.5" height="3"/>
+              </g>
+              <path d="M14 -66 L40 -34 L48 -4" fill="none" stroke="#111114" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M40 -6 L56 -6 L62 2 L34 2 Z" fill="#111114"/>
+            </g>
+          </g>
+          <!-- found label -->
+          <g id="found" opacity="0" transform="translate(680 120)">
+            <rect x="-74" y="-20" width="148" height="40" rx="20" fill="#FFD400" stroke="#111114" stroke-width="3"/>
+            <text x="0" y="7" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-weight="900" font-size="17" fill="#111114" letter-spacing="1">FOUND IT</text>
+          </g>
+        </svg>
+        <div class="scene-cap"><i></i>Scroll: he follows the tracer gas</div>
+      </div>
+    </div>
+  </div>
+
+  <svg class="pipe" viewBox="0 0 1200 46" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="0" y1="10" x2="1200" y2="10" stroke="#111114" stroke-width="3"/>
+    <line x1="0" y1="30" x2="1200" y2="30" stroke="#111114" stroke-width="6" opacity=".9"/>
+    <line class="flow" x1="0" y1="30" x2="1200" y2="30" stroke="#2F7BE5" stroke-width="3"/>
+  </svg>
+
+  <section id="calc">
+    <div class="wrap calc-grid">
+      <div class="head">
+        <h2 class="rv">What could it add <span class="hl">to your month?</span></h2>
+        <p class="muted rv d1">Count the leak calls you pass to someone else or turn down today. Every one of them is a job you could keep.</p>
+        <p class="note rv d2">Illustrative estimate based on typical US ranges. Revenue before costs, not profit. Assumes about $4,500 in equipment.</p>
+      </div>
+      <div class="calc rv d1">
+        <div class="row">
+          <div class="row-top"><label for="price">Price per job</label><output id="price-out" for="price">$450</output></div>
+          <input type="range" id="price" min="150" max="1500" step="25" value="450">
+          <span class="hint">Typical US range: $300–$1,300</span>
+        </div>
+        <div class="row">
+          <div class="row-top"><label for="calls">Leak calls per month</label><output id="calls-out" for="calls">4</output></div>
+          <input type="range" id="calls" min="1" max="20" step="1" value="4">
+        </div>
+        <div class="result" aria-live="polite">
+          <span class="muted">Extra per month</span>
+          <div class="big" id="month">$1,800</div>
+          <span class="sub" id="detail">$21,600 a year · detector covered in about 10 jobs</span>
+          <div class="coins" id="coins" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap prod-grid">
+      <div class="prod-ph rv" id="prod-ph">
+        <span class="tag">Tracer gas detector</span>
+        <img id="prod-img" src="a/sniffer430.png" alt="Sniffer430 tracer gas leak detector: touchscreen unit and wireless hydrogen sensor" width="640" height="536">
+      </div>
+      <div style="display:grid;gap:24px">
+        <h2 class="rv">The tool <span class="hl">behind the 30 minutes</span></h2>
+        <ul class="feats">
+          <li class="rv d1"><svg viewBox="0 0 44 44" aria-hidden="true"><rect x="1" y="1" width="42" height="42" rx="12" fill="#fff" stroke="#E4E0D8"/><line x1="8" y1="17" x2="36" y2="17" stroke="#111114" stroke-width="3"/><path d="M22 20 V32" stroke="#111114" stroke-width="2.5" stroke-dasharray="2.5 3"/><circle cx="22" cy="33" r="4" fill="none" stroke="#111114" stroke-width="2.5"/></svg><div><b>Under slabs, in walls, ~10 ft deep</b><span>The gas comes up through soil, concrete and tile right above the leak.</span></div></li>
+          <li class="rv d2"><svg viewBox="0 0 44 44" aria-hidden="true"><rect x="1" y="1" width="42" height="42" rx="12" fill="#fff" stroke="#E4E0D8"/><rect x="11" y="13" width="22" height="16" rx="3" fill="none" stroke="#111114" stroke-width="2.5"/><path d="M19 17 L26 21 L19 25 Z" fill="#111114"/></svg><div><b>Learn it in about 10 minutes</b><span>Most people learn it from the demo videos. It works like a metal detector.</span></div></li>
+          <li class="rv d3"><svg viewBox="0 0 44 44" aria-hidden="true"><rect x="1" y="1" width="42" height="42" rx="12" fill="#fff" stroke="#E4E0D8"/><path d="M14 22 L20 28 L31 15" fill="none" stroke="#111114" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b>No calibration, no filters</b><span>No service plan. Keep it clean and dry.</span></div></li>
+        </ul>
+        <div class="btns rv"><a class="btn btn-ink" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="product_buy">Buy the Sniffer430 <span class="arr">→</span></a></div>
+        <div class="small-links rv">
+          <a href="https://jacobs-mc.co/sniffer430" data-utm="demo_videos">Watch demo videos</a>
+          <a href="https://jacobs-mc.co/lixener30" data-utm="lixener30">Need acoustic? Lixener30</a>
+        </div>
+        <p class="trust rv">Florida service center · 1-year warranty · Ships in 24 hours · Financing at checkout</p>
+      </div>
+    </div>
+  </section>
+
+  <svg class="pipe" viewBox="0 0 1200 46" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="0" y1="10" x2="1200" y2="10" stroke="#111114" stroke-width="3"/>
+    <line x1="0" y1="30" x2="1200" y2="30" stroke="#111114" stroke-width="6" opacity=".9"/>
+    <line class="flow" x1="0" y1="30" x2="1200" y2="30" stroke="#2F7BE5" stroke-width="3"/>
+  </svg>
+
+  <div class="wrap contact rv">
+    <span class="muted">Questions? Call the US team</span>
+    <b>+1 954-951-5501</b>
+    <span class="muted">Mon–Fri, 10am–5pm ET · <a href="tel:+19549515501">Call</a></span>
+  </div>
+</main>
+
+<footer class="wrap">Typical US ranges and illustrative math. Results vary. Sold and supported by Jacob's-MC.</footer>
+
+<div class="dock" id="dock" aria-hidden="true">
+  <p><b>Sniffer430</b>Tracer gas leak detector</p>
+  <a class="btn" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="dock_buy" tabindex="-1">Get it <span class="arr">→</span></a>
+</div>
+
+<script>
+(function(){
+  var UTM = "utm_source=instagram&utm_medium=bio&utm_campaign=underground_plumber", INVEST = 4500;
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  [].forEach.call(document.querySelectorAll("a[data-utm]"), function(a){
+    a.href += (a.href.indexOf("?") < 0 ? "?" : "&") + UTM + "&utm_content=" + a.getAttribute("data-utm");
+  });
+
+  /* ---------- reveals + highlighter ---------- */
+  var els = document.querySelectorAll(".rv, .hl");
+  if ("IntersectionObserver" in window && !reduce) {
+    var io = new IntersectionObserver(function(es){
+      es.forEach(function(e){ if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });
+    }, {rootMargin: "0px 0px -8% 0px", threshold: .12});
+    [].forEach.call(els, function(el){ io.observe(el); });
+  } else {
+    [].forEach.call(els, function(el){ el.classList.add("in"); });
+  }
+
+  /* ---------- header + dock ---------- */
+  var hdr = document.getElementById("hdr"), dock = document.getElementById("dock"), heroBtns = document.getElementById("hero-btns");
+  function chrome(){
+    hdr.classList.toggle("scrolled", window.scrollY > 8);
+    var r = heroBtns.getBoundingClientRect();
+    var nearEnd = window.innerHeight + window.scrollY > document.body.scrollHeight - 160;
+    var on = r.bottom < 0 && !nearEnd;
+    dock.classList.toggle("show", on); dock.setAttribute("aria-hidden", on ? "false" : "true");
+  }
+
+  /* ---------- the scene: scroll walks the plumber to the leak ---------- */
+  var NS = "http://www.w3.org/2000/svg", scene = document.getElementById("scene");
+  var pro = document.getElementById("pro"), bob = document.getElementById("bob"), bars = document.getElementById("bars").children;
+  var ringsG = document.getElementById("rings"), gasG = document.getElementById("gas");
+  var found = document.getElementById("found"), foundRing = document.getElementById("found-ring");
+  var LEAK = 560, X0 = 150, X1 = LEAK - 48, shown = 0, t0 = performance.now(), lastBeep = 0;
+  var gas = [];
+  for (var i = 0; i < 9; i++) {
+    var c = document.createElementNS(NS, "circle"); c.setAttribute("r", 4); c.setAttribute("fill", "#111114");
+    gasG.appendChild(c); gas.push({el: c, ph: i / 9, dx: (Math.random() - .5) * 16});
+  }
+  function scrollProgress(){
+    var r = scene.getBoundingClientRect(), vh = window.innerHeight || 800;
+    var p = (vh * .78 - r.top) / (r.height + vh * .2);
+    return Math.max(0, Math.min(1, p));
+  }
+  function frame(now){
+    var t = (now - t0) / 1000;
+    var auto = Math.min(.22, Math.max(0, (t - .8) * .12));       // he starts walking on his own
+    var target = reduce ? 1 : Math.max(scrollProgress(), auto);
+    shown += (target - shown) * (reduce ? 1 : .08);
+    var x = X0 + (X1 - X0) * shown, moving = Math.abs(target - shown) > .002;
+    var by = moving ? -Math.abs(Math.sin(x / 9)) * 4 : 0;
+    pro.setAttribute("transform", "translate(" + x.toFixed(1) + " 170)");
+    bob.setAttribute("transform", "translate(0 " + by.toFixed(1) + ")");
+    var cone = x + 48, d = Math.abs(cone - LEAK), lvl = Math.max(0, 1 - Math.min(d, 320) / 320);
+    var hs = [3, 6, 9, 12];
+    for (var k = 0; k < 4; k++) {
+      var on = lvl * 4 > k + .15, h = on ? hs[k] : 3;
+      bars[k].setAttribute("height", h); bars[k].setAttribute("y", -57 - h); bars[k].setAttribute("opacity", on ? 1 : .3);
+    }
+    // gas rising from the leak to the surface
+    gas.forEach(function(g){
+      var ph = (t * .45 + g.ph) % 1;
+      g.el.setAttribute("cx", (LEAK + g.dx * ph + Math.sin(ph * 7 + g.dx) * 3).toFixed(1));
+      g.el.setAttribute("cy", (252 - ph * 82).toFixed(1));
+      g.el.setAttribute("opacity", (Math.sin(ph * Math.PI) * .9).toFixed(2));
+      g.el.setAttribute("r", (4.2 - ph * 1.6).toFixed(2));
+    });
+    // beeps speed up near the leak
+    var gap = .25 + (1 - lvl) * 1.1;
+    if (!reduce && t - lastBeep > gap && shown < .995) {
+      lastBeep = t;
+      var r = document.createElementNS(NS, "path");
+      r.setAttribute("fill", "none"); r.setAttribute("stroke", "#111114"); r.setAttribute("stroke-width", 3);
+      r.dataset.t = t; r.dataset.x = cone; ringsG.appendChild(r);
+    }
+    [].slice.call(ringsG.children).forEach(function(r){
+      var ph = (t - r.dataset.t) / .55;
+      if (ph >= 1) { ringsG.removeChild(r); return; }
+      var rad = 10 + 46 * ph, cx = +r.dataset.x, cy = 168;
+      r.setAttribute("d", "M" + (cx - rad * .8).toFixed(1) + " " + (cy - rad * .6).toFixed(1) + " A" + rad + " " + rad + " 0 0 1 " + (cx + rad * .8).toFixed(1) + " " + (cy - rad * .6).toFixed(1));
+      r.setAttribute("opacity", ((1 - ph) * .8).toFixed(2));
+    });
+    // found
+    var f = Math.max(0, Math.min(1, (shown - .95) / .05));
+    found.setAttribute("opacity", f.toFixed(2));
+    found.setAttribute("transform", "translate(" + (LEAK + 120) + " " + (128 - 10 * f).toFixed(1) + ")");
+    var pulse = f > 0 ? (t * .9) % 1 : 0;
+    foundRing.setAttribute("r", (20 + 26 * pulse).toFixed(1));
+    foundRing.setAttribute("opacity", (f * (1 - pulse)).toFixed(2));
+    chrome();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+  window.addEventListener("scroll", chrome, {passive: true});
+
+  /* ---------- product parallax ---------- */
+  var ph = document.getElementById("prod-ph"), img = document.getElementById("prod-img");
+  function parallax(){
+    if (reduce) return;
+    var r = ph.getBoundingClientRect(), vh = window.innerHeight;
+    var p = (r.top + r.height / 2 - vh / 2) / vh;
+    img.style.transform = "translateY(" + (p * -36).toFixed(1) + "px) rotate(" + (p * -3).toFixed(2) + "deg)";
+  }
+  window.addEventListener("scroll", parallax, {passive: true}); parallax();
+
+  /* ---------- calculator ---------- */
+  var price = document.getElementById("price"), calls = document.getElementById("calls");
+  var monthEl = document.getElementById("month"), coins = document.getElementById("coins");
+  for (var j = 0; j < 20; j++) coins.appendChild(document.createElement("i"));
+  var fmt = function(n){ return "$" + Math.round(n).toLocaleString("en-US"); };
+  var shownMonth = 0, goal = 0, counting = false, calcSeen = false;
+  function fill(r){ r.style.setProperty("--p", ((r.value - r.min) / (r.max - r.min) * 100) + "%"); }
+  function tick(){
+    shownMonth += (goal - shownMonth) * .16;
+    if (Math.abs(goal - shownMonth) < 1) shownMonth = goal;
+    monthEl.textContent = fmt(shownMonth);
+    if (shownMonth !== goal) requestAnimationFrame(tick); else counting = false;
+  }
+  function update(){
+    var p = +price.value, c = +calls.value, m = p * c;
+    fill(price); fill(calls);
+    document.getElementById("price-out").textContent = fmt(p);
+    document.getElementById("calls-out").textContent = c;
+    document.getElementById("detail").textContent = fmt(m * 12) + " a year · detector covered in about " + Math.ceil(INVEST / p) + " jobs";
+    [].forEach.call(coins.children, function(el, k){ el.classList.toggle("on", k < c); });
+    goal = m;
+    if (reduce || !calcSeen) { shownMonth = m; monthEl.textContent = fmt(m); return; }
+    if (!counting) { counting = true; requestAnimationFrame(tick); }
+  }
+  price.addEventListener("input", update); calls.addEventListener("input", update); update();
+  if ("IntersectionObserver" in window && !reduce) {
+    var cio = new IntersectionObserver(function(es){
+      if (es[0].isIntersecting && !calcSeen) { calcSeen = true; shownMonth = 0; goal = +price.value * +calls.value; counting = true; requestAnimationFrame(tick); cio.disconnect(); }
+    }, {threshold: .4});
+    cio.observe(document.querySelector(".result"));
+  } else { calcSeen = true; }
+})();
+</script>
+</body>
+</html>
