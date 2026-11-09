@@ -1,0 +1,150 @@
+<header id="hdr">
+  <div class="wrap bar">
+    <a class="brand" href="#top"><img src="a/logo.png" alt="" width="34" height="34">The Underground Plumber</a>
+    <a class="btn btn-ink" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="header_buy">Get the detector</a>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <div class="hero-grid">
+      <div style="display:grid;gap:22px">
+        <h1 class="rv">Stop turning down <span class="hl">leak calls.</span></h1>
+        <p class="lead rv d1">Leak detection jobs typically pay $300–$1,300 in the US. With tracer gas you find the leak in about 30 minutes, then dig once.</p>
+        <div class="btns rv d2" id="hero-btns">
+          <a class="btn btn-ink" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="hero_buy">Get the detector <span class="arr">→</span></a>
+          <a class="btn btn-line" href="#calc">What could it pay me?</a>
+        </div>
+        <div class="kpis rv d3">
+          <div class="kpi"><b>$300–$1,300</b><span>typical job, US</span></div>
+          <div class="kpi"><b>~30 min</b><span>typical locate</span></div>
+          <div class="kpi"><b>~10 ft</b><span>typical depth</span></div>
+        </div>
+      </div>
+
+      <div class="scene-wrap" aria-hidden="true">
+        <svg class="scene" id="scene" viewBox="40 20 720 300">
+          <defs>
+            <pattern id="soil" width="44" height="30" patternUnits="userSpaceOnUse">
+              <rect x="4" y="8" width="16" height="3" fill="#111114" opacity=".22"/>
+              <rect x="26" y="22" width="12" height="3" fill="#111114" opacity=".16"/>
+            </pattern>
+          </defs>
+          <rect x="0" y="170" width="800" height="160" fill="url(#soil)"/>
+          <line x1="0" y1="170" x2="800" y2="170" stroke="#111114" stroke-width="4"/>
+          <!-- pipe -->
+          <path d="M50 172 V262 H750 V172" fill="none" stroke="#111114" stroke-width="5" stroke-linejoin="round"/>
+          <path class="flow" d="M50 176 V262 H750 V176" fill="none" stroke="#2F7BE5" stroke-width="3" opacity=".75" style="stroke-dasharray:14 16;animation:flow 1.8s linear infinite"/>
+          <!-- gas rising at the leak -->
+          <g id="gas"></g>
+          <!-- target / leak -->
+          <g id="target" transform="translate(560 262)">
+            <circle id="found-ring" r="22" fill="none" stroke="#FFD400" stroke-width="6" opacity="0"/>
+            <circle r="17" fill="#F6F4F0" stroke="#111114" stroke-width="4"/>
+            <line x1="0" y1="-27" x2="0" y2="27" stroke="#111114" stroke-width="4"/>
+            <line x1="-27" y1="0" x2="27" y2="0" stroke="#111114" stroke-width="4"/>
+            <circle r="5" fill="#111114"/>
+          </g>
+          <!-- beep rings -->
+          <g id="rings"></g>
+          <!-- plumber with detector -->
+          <g id="pro" transform="translate(150 170)">
+            <g id="bob">
+              <path d="M-26 0 C-26 -64 -15 -98 0 -98 C15 -98 26 -64 26 0 Z" fill="#111114"/>
+              <circle cx="0" cy="-122" r="19" fill="#111114"/>
+              <rect x="-19" y="-126" width="46" height="7" rx="3.5" fill="#111114"/>
+              <rect x="-15" y="-125" width="27" height="4" fill="#F6F4F0"/>
+              <rect x="-12" y="-74" width="25" height="18" rx="4" fill="#fff"/>
+              <g id="bars" fill="#111114">
+                <rect x="-8" y="-62" width="3.5" height="3"/><rect x="-3" y="-62" width="3.5" height="3"/><rect x="2" y="-62" width="3.5" height="3"/><rect x="7" y="-62" width="3.5" height="3"/>
+              </g>
+              <path d="M14 -66 L40 -34 L48 -4" fill="none" stroke="#111114" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M40 -6 L56 -6 L62 2 L34 2 Z" fill="#111114"/>
+            </g>
+          </g>
+          <!-- found label -->
+          <g id="found" opacity="0" transform="translate(680 120)">
+            <rect x="-74" y="-20" width="148" height="40" rx="20" fill="#FFD400" stroke="#111114" stroke-width="3"/>
+            <text x="0" y="7" text-anchor="middle" font-family="Inter,Arial,sans-serif" font-weight="900" font-size="17" fill="#111114" letter-spacing="1">FOUND IT</text>
+          </g>
+        </svg>
+        <div class="scene-cap"><i></i>Scroll: he follows the tracer gas</div>
+      </div>
+    </div>
+  </div>
+
+  <svg class="pipe" viewBox="0 0 1200 46" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="0" y1="10" x2="1200" y2="10" stroke="#111114" stroke-width="3"/>
+    <line x1="0" y1="30" x2="1200" y2="30" stroke="#111114" stroke-width="6" opacity=".9"/>
+    <line class="flow" x1="0" y1="30" x2="1200" y2="30" stroke="#2F7BE5" stroke-width="3"/>
+  </svg>
+
+  <section id="calc">
+    <div class="wrap calc-grid">
+      <div class="head">
+        <h2 class="rv">What could it add <span class="hl">to your month?</span></h2>
+        <p class="muted rv d1">Count the leak calls you pass to someone else or turn down today. Every one of them is a job you could keep.</p>
+        <p class="note rv d2">Illustrative estimate based on typical US ranges. Revenue before costs, not profit. Assumes about $4,500 in equipment.</p>
+      </div>
+      <div class="calc rv d1">
+        <div class="row">
+          <div class="row-top"><label for="price">Price per job</label><output id="price-out" for="price">$450</output></div>
+          <input type="range" id="price" min="150" max="1500" step="25" value="450">
+          <span class="hint">Typical US range: $300–$1,300</span>
+        </div>
+        <div class="row">
+          <div class="row-top"><label for="calls">Leak calls per month</label><output id="calls-out" for="calls">4</output></div>
+          <input type="range" id="calls" min="1" max="20" step="1" value="4">
+        </div>
+        <div class="result" aria-live="polite">
+          <span class="muted">Extra per month</span>
+          <div class="big" id="month">$1,800</div>
+          <span class="sub" id="detail">$21,600 a year · detector covered in about 10 jobs</span>
+          <div class="coins" id="coins" aria-hidden="true"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section style="padding-top:0">
+    <div class="wrap prod-grid">
+      <div class="prod-ph rv" id="prod-ph">
+        <span class="tag">Tracer gas detector</span>
+        <img id="prod-img" src="a/sniffer430.png" alt="Sniffer430 tracer gas leak detector: touchscreen unit and wireless hydrogen sensor" width="640" height="536">
+      </div>
+      <div style="display:grid;gap:24px">
+        <h2 class="rv">The tool <span class="hl">behind the 30 minutes</span></h2>
+        <ul class="feats">
+          <li class="rv d1"><svg viewBox="0 0 44 44" aria-hidden="true"><rect x="1" y="1" width="42" height="42" rx="12" fill="#fff" stroke="#E4E0D8"/><line x1="8" y1="17" x2="36" y2="17" stroke="#111114" stroke-width="3"/><path d="M22 20 V32" stroke="#111114" stroke-width="2.5" stroke-dasharray="2.5 3"/><circle cx="22" cy="33" r="4" fill="none" stroke="#111114" stroke-width="2.5"/></svg><div><b>Under slabs, in walls, ~10 ft deep</b><span>The gas comes up through soil, concrete and tile right above the leak.</span></div></li>
+          <li class="rv d2"><svg viewBox="0 0 44 44" aria-hidden="true"><rect x="1" y="1" width="42" height="42" rx="12" fill="#fff" stroke="#E4E0D8"/><rect x="11" y="13" width="22" height="16" rx="3" fill="none" stroke="#111114" stroke-width="2.5"/><path d="M19 17 L26 21 L19 25 Z" fill="#111114"/></svg><div><b>Learn it in about 10 minutes</b><span>Most people learn it from the demo videos. It works like a metal detector.</span></div></li>
+          <li class="rv d3"><svg viewBox="0 0 44 44" aria-hidden="true"><rect x="1" y="1" width="42" height="42" rx="12" fill="#fff" stroke="#E4E0D8"/><path d="M14 22 L20 28 L31 15" fill="none" stroke="#111114" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg><div><b>No calibration, no filters</b><span>No service plan. Keep it clean and dry.</span></div></li>
+        </ul>
+        <div class="btns rv"><a class="btn btn-ink" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="product_buy">Buy the Sniffer430 <span class="arr">→</span></a></div>
+        <div class="small-links rv">
+          <a href="https://jacobs-mc.co/sniffer430" data-utm="demo_videos">Watch demo videos</a>
+          <a href="https://jacobs-mc.co/lixener30" data-utm="lixener30">Need acoustic? Lixener30</a>
+        </div>
+        <p class="trust rv">Florida service center · 1-year warranty · Ships in 24 hours · Financing at checkout</p>
+      </div>
+    </div>
+  </section>
+
+  <svg class="pipe" viewBox="0 0 1200 46" preserveAspectRatio="none" aria-hidden="true">
+    <line x1="0" y1="10" x2="1200" y2="10" stroke="#111114" stroke-width="3"/>
+    <line x1="0" y1="30" x2="1200" y2="30" stroke="#111114" stroke-width="6" opacity=".9"/>
+    <line class="flow" x1="0" y1="30" x2="1200" y2="30" stroke="#2F7BE5" stroke-width="3"/>
+  </svg>
+
+  <div class="wrap contact rv">
+    <span class="muted">Questions? Call the US team</span>
+    <b>+1 954-951-5501</b>
+    <span class="muted">Mon–Fri, 10am–5pm ET · <a href="tel:+19549515501">Call</a></span>
+  </div>
+</main>
+
+<footer class="wrap">Typical US ranges and illustrative math. Results vary. Sold and supported by Jacob's-MC.</footer>
+
+<div class="dock" id="dock" aria-hidden="true">
+  <p><b>Sniffer430</b>Tracer gas leak detector</p>
+  <a class="btn" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="dock_buy" tabindex="-1">Get it <span class="arr">→</span></a>
+</div>
