@@ -258,7 +258,7 @@ footer{padding:0 0 110px;font-size:12px;color:var(--soft);text-align:center}
       </div>
       <div>
         <div class="player rv" id="player" role="button" tabindex="0" aria-label="Play the demo video">
-          <img id="player-img" src="https://i.ytimg.com/vi/rOUyymtmOWA/hqdefault.jpg" alt="Sniffer430 demo video" width="480" height="360" loading="lazy">
+          <img id="player-img" onerror="this.style.visibility='hidden'" onload="this.style.visibility='visible'" src="https://i.ytimg.com/vi/rOUyymtmOWA/hqdefault.jpg" alt="Sniffer430 demo video" width="480" height="360" loading="lazy">
           <span class="play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4 L20 12 L6 20 Z" fill="#111114"/></svg></span>
         </div>
         <div class="vtabs" id="vtabs">
