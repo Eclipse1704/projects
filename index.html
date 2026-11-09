@@ -132,6 +132,22 @@ footer{padding:0 0 110px;font-size:12px;color:var(--soft);text-align:center}
 .dock p b{display:block;font-size:15px}
 .dock .btn{min-height:46px;padding:0 18px;font-size:15px;background:var(--yellow);color:var(--ink);border-color:var(--yellow);box-shadow:none}
 
+
+/* demo videos (official channel), loaded only when tapped */
+.demo{padding:64px 0 8px}
+.player{position:relative;aspect-ratio:16/9;border-radius:22px;overflow:hidden;background:#111114;box-shadow:0 20px 50px rgba(17,17,20,.14);cursor:pointer}
+.player img{width:100%;height:100%;object-fit:cover;transition:transform .6s var(--ease)}
+.player:hover img{transform:scale(1.03)}
+.player iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.play{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:84px;height:84px;border-radius:50%;background:var(--yellow);border:3px solid var(--ink);display:grid;place-items:center;cursor:pointer;box-shadow:0 10px 30px rgba(0,0,0,.35);transition:transform .25s var(--ease)}
+.player:hover .play{transform:translate(-50%,-50%) scale(1.08)}
+.play svg{width:30px;height:30px;margin-left:5px}
+.play::after{content:"";position:absolute;inset:-12px;border-radius:50%;border:3px solid var(--yellow);animation:pulse 2s ease-out infinite}
+@keyframes pulse{from{transform:scale(.8);opacity:.9}to{transform:scale(1.35);opacity:0}}
+.vtabs{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.vtab{border:2px solid var(--ink);background:transparent;color:var(--ink);border-radius:999px;padding:9px 16px;font:700 15px var(--font);cursor:pointer;transition:background .2s}
+.vtab[aria-pressed="true"]{background:var(--ink);color:#fff}
+
 @media (min-width:900px){
   .hero{padding-top:56px}
   h1{font-size:clamp(44px,5.6vw,74px)}
@@ -233,6 +249,27 @@ footer{padding:0 0 110px;font-size:12px;color:var(--soft);text-align:center}
     <line class="flow" x1="0" y1="30" x2="1200" y2="30" stroke="#2F7BE5" stroke-width="3"/>
   </svg>
 
+
+  <section id="demo" class="demo">
+    <div class="wrap" style="display:grid;gap:22px">
+      <div class="head">
+        <h2 class="rv">Watch it <span class="hl">find a leak</span></h2>
+        <p class="muted rv d1">A full walkthrough and real jobs with the tracer gas detector.</p>
+      </div>
+      <div>
+        <div class="player rv" id="player" role="button" tabindex="0" aria-label="Play the demo video">
+          <img id="player-img" src="https://i.ytimg.com/vi/rOUyymtmOWA/hqdefault.jpg" alt="Sniffer430 demo video" width="480" height="360" loading="lazy">
+          <span class="play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4 L20 12 L6 20 Z" fill="#111114"/></svg></span>
+        </div>
+        <div class="vtabs" id="vtabs">
+          <button type="button" class="vtab" aria-pressed="true" data-id="rOUyymtmOWA">Full walkthrough</button>
+          <button type="button" class="vtab" aria-pressed="false" data-id="n9Ie3ye8k8s">Leak under tile</button>
+          <button type="button" class="vtab" aria-pressed="false" data-id="i5QpvL6kQrY">Underground, 5 ft</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="calc">
     <div class="wrap calc-grid">
       <div class="head">
@@ -275,7 +312,7 @@ footer{padding:0 0 110px;font-size:12px;color:var(--soft);text-align:center}
         </ul>
         <div class="btns rv"><a class="btn btn-ink" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="product_buy">Buy the Sniffer430 <span class="arr">→</span></a></div>
         <div class="small-links rv">
-          <a href="https://jacobs-mc.co/sniffer430" data-utm="demo_videos">Watch demo videos</a>
+          <a href="#demo">Watch it find a leak</a>
           <a href="https://jacobs-mc.co/lixener30" data-utm="lixener30">Need acoustic? Lixener30</a>
         </div>
         <p class="trust rv">Florida service center · 1-year warranty · Ships in 24 hours · Financing at checkout</p>
@@ -408,6 +445,29 @@ footer{padding:0 0 110px;font-size:12px;color:var(--soft);text-align:center}
     img.style.transform = "translateY(" + (p * -36).toFixed(1) + "px) rotate(" + (p * -3).toFixed(2) + "deg)";
   }
   window.addEventListener("scroll", parallax, {passive: true}); parallax();
+
+
+  /* ---------- demo player: thumbnail first, YouTube only after a tap ---------- */
+  var player = document.getElementById("player"), pimg = document.getElementById("player-img"), vid = "rOUyymtmOWA";
+  function playVideo(){
+    if (player.querySelector("iframe")) return;
+    var f = document.createElement("iframe");
+    f.src = "https://www.youtube-nocookie.com/embed/" + vid + "?autoplay=1&rel=0&modestbranding=1&playsinline=1";
+    f.title = "Sniffer430 demo video";
+    f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    f.setAttribute("allowfullscreen", "");
+    player.appendChild(f);
+  }
+  player.addEventListener("click", playVideo);
+  player.addEventListener("keydown", function(e){ if (e.key === "Enter" || e.key === " ") { e.preventDefault(); playVideo(); } });
+  [].forEach.call(document.querySelectorAll(".vtab"), function(b){
+    b.addEventListener("click", function(){
+      vid = b.getAttribute("data-id");
+      [].forEach.call(document.querySelectorAll(".vtab"), function(x){ x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+      var old = player.querySelector("iframe"); if (old) { player.removeChild(old); playVideo(); }
+      pimg.src = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg";
+    });
+  });
 
   /* ---------- calculator ---------- */
   var price = document.getElementById("price"), calls = document.getElementById("calls");
