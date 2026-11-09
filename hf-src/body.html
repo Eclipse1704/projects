@@ -79,6 +79,27 @@
     <line class="flow" x1="0" y1="30" x2="1200" y2="30" stroke="#2F7BE5" stroke-width="3"/>
   </svg>
 
+
+  <section id="demo" class="demo">
+    <div class="wrap" style="display:grid;gap:22px">
+      <div class="head">
+        <h2 class="rv">Watch it <span class="hl">find a leak</span></h2>
+        <p class="muted rv d1">A full walkthrough and real jobs with the tracer gas detector.</p>
+      </div>
+      <div>
+        <div class="player rv" id="player" role="button" tabindex="0" aria-label="Play the demo video">
+          <img id="player-img" onerror="this.style.visibility='hidden'" onload="this.style.visibility='visible'" src="https://i.ytimg.com/vi/rOUyymtmOWA/hqdefault.jpg" alt="Sniffer430 demo video" width="480" height="360" loading="lazy">
+          <span class="play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 4 L20 12 L6 20 Z" fill="#111114"/></svg></span>
+        </div>
+        <div class="vtabs" id="vtabs">
+          <button type="button" class="vtab" aria-pressed="true" data-id="rOUyymtmOWA">Full walkthrough</button>
+          <button type="button" class="vtab" aria-pressed="false" data-id="n9Ie3ye8k8s">Leak under tile</button>
+          <button type="button" class="vtab" aria-pressed="false" data-id="i5QpvL6kQrY">Underground, 5 ft</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="calc">
     <div class="wrap calc-grid">
       <div class="head">
@@ -121,7 +142,7 @@
         </ul>
         <div class="btns rv"><a class="btn btn-ink" href="https://jacobs-mc.co/product-details/product/sniffer430-water-leak-detector" data-utm="product_buy">Buy the Sniffer430 <span class="arr">→</span></a></div>
         <div class="small-links rv">
-          <a href="https://jacobs-mc.co/sniffer430" data-utm="demo_videos">Watch demo videos</a>
+          <a href="#demo">Watch it find a leak</a>
           <a href="https://jacobs-mc.co/lixener30" data-utm="lixener30">Need acoustic? Lixener30</a>
         </div>
         <p class="trust rv">Florida service center · 1-year warranty · Ships in 24 hours · Financing at checkout</p>

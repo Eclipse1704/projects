@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* Landing page behaviour: tracking params, reveals, the walking-plumber scene, parallax, calculator. Runs once in the browser. */
+/* Landing page behaviour: tracking params, reveals, the walking-plumber scene, demo player, parallax, calculator. Runs once in the browser. */
 export function initLanding() {
   if (typeof window === "undefined" || window.__lpInit) return;
   window.__lpInit = true;
@@ -108,6 +108,29 @@ export function initLanding() {
     img.style.transform = "translateY(" + (p * -36).toFixed(1) + "px) rotate(" + (p * -3).toFixed(2) + "deg)";
   }
   window.addEventListener("scroll", parallax, {passive: true}); parallax();
+
+
+  /* ---------- demo player: thumbnail first, YouTube only after a tap ---------- */
+  var player = document.getElementById("player"), pimg = document.getElementById("player-img"), vid = "rOUyymtmOWA";
+  function playVideo(){
+    if (player.querySelector("iframe")) return;
+    var f = document.createElement("iframe");
+    f.src = "https://www.youtube-nocookie.com/embed/" + vid + "?autoplay=1&rel=0&modestbranding=1&playsinline=1";
+    f.title = "Sniffer430 demo video";
+    f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+    f.setAttribute("allowfullscreen", "");
+    player.appendChild(f);
+  }
+  player.addEventListener("click", playVideo);
+  player.addEventListener("keydown", function(e){ if (e.key === "Enter" || e.key === " ") { e.preventDefault(); playVideo(); } });
+  [].forEach.call(document.querySelectorAll(".vtab"), function(b){
+    b.addEventListener("click", function(){
+      vid = b.getAttribute("data-id");
+      [].forEach.call(document.querySelectorAll(".vtab"), function(x){ x.setAttribute("aria-pressed", x === b ? "true" : "false"); });
+      var old = player.querySelector("iframe"); if (old) { player.removeChild(old); playVideo(); }
+      pimg.src = "https://i.ytimg.com/vi/" + vid + "/hqdefault.jpg";
+    });
+  });
 
   /* ---------- calculator ---------- */
   var price = document.getElementById("price"), calls = document.getElementById("calls");
